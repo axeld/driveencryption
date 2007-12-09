@@ -1,0 +1,10 @@
+* Support partial block read and write accesses.
+* Support changing the password of existing encrypted drives.
+* Support filling the device with random data on creation.
+* Add possibility to back up and restore the volume header (both, standard,
+  and hidden).
+* Allow file system creation (FAT (via mkdos), and BFS (via mkbfs)).
+* Allow drive detection on something other than the device ID; ie. one could
+  save the (encrypted) volume header, and compare that with existing devices.
+* Get rid of the global driver lock for I/O.
+* Have a nice icon for DriveEncryption.
