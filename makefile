@@ -13,11 +13,11 @@ attrs:
 	svn propget beos:styles --strict Read\ Me >/tmp/attr.styles
 	addattr -f /tmp/attr.styles -t raw styles Read\ Me
 	svn propget beos:BEOS:TYPE --strict Read\ Me >/tmp/attr.type
-	addattr -f /tmp/attr.type -t 'MIMS' BEOS:TYPE Read\ Me
+	addattr -f /tmp/attr.type -t "'MIMS'" BEOS:TYPE Read\ Me
 	svn propget beos:BEOS:TYPE --strict install-encryption.sh >/tmp/attr.type
-	addattr -f /tmp/attr.type -t 'MIMS' BEOS:TYPE install-encryption.sh
+	addattr -f /tmp/attr.type -t "'MIMS'" BEOS:TYPE install-encryption.sh
 	svn propget beos:BEOS:TYPE --strict makefile >/tmp/attr.type
-	addattr -f /tmp/attr.type -t 'MIMS' BEOS:TYPE makefile
+	addattr -f /tmp/attr.type -t "'MIMS'" BEOS:TYPE makefile
 
 # Updates the SVN property to contain an up-to-date "styles" attribute.
 # You will need to have Haiku's "catattr" installed for this to work.
