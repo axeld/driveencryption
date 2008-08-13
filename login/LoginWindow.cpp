@@ -1,11 +1,13 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
 
 #include "LoginWindow.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -15,6 +17,7 @@
 #include <FindDirectory.h>
 #include <MessageRunner.h>
 #include <Path.h>
+#include <String.h>
 #include <StringView.h>
 #include <TextControl.h>
 

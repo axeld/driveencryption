@@ -1,11 +1,12 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 #ifndef CHANGE_PASSWORD_WINDOW_H
 #define CHANGE_PASSWORD_WINDOW_H
 
 
+#include <Messenger.h>
 #include <Window.h>
 
 class BButton;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2003-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -10,11 +10,15 @@
 #include <Directory.h>
 #include <String.h>
 
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-//#include <stdarg.h>
 #include <unistd.h>
+
+#ifdef __HAIKU__
+#	include <fs_volume.h>
+#endif
 
 
 static bool
@@ -123,8 +127,14 @@ mount_device(const char *file, const char* mountAt)
 
 	create_directory(name, 0755);
 
+#ifdef __HAIKU__
+	status_t status = fs_mount_volume(name, file, fileSystem.String(), 0, NULL);
+	if (status != B_OK)
+		return status;
+#else
 	if (mount(fileSystem.String(), name, file, 0, NULL, 0) < 0)
 		return errno;
+#endif
 
 	return B_OK;
 }

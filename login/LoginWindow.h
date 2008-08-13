@@ -1,5 +1,5 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 #ifndef LOGIN_WINDOW_H
@@ -10,6 +10,7 @@
 
 class BButton;
 class BMessageRunner;
+class BString;
 class BTextControl;
 class PaneSwitch;
 

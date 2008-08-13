@@ -1,11 +1,13 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
 
 #include "DriveWindow.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -21,6 +23,10 @@
 #include <Screen.h>
 #include <View.h>
 #include <Volume.h>
+
+#ifdef __HAIKU__
+#	include <fs_volume.h>
+#endif
 
 #include "encrypted_drive.h"
 
@@ -937,8 +943,13 @@ DriveWindow::_RemoveFile(DriveRow* row)
 
 		// try unmounting first
 		// TODO: check if this points to the correct device first!
-		if (row->HasMountAt())
+		if (row->HasMountAt()) {
+#ifdef __HAIKU__
+			fs_unmount_volume(row->MountAt(), 0);
+#else
 			unmount(row->MountAt());
+#endif
+		}
 
 		int fd = open(row->Device(), O_RDONLY);
 		if (fd < 0) {

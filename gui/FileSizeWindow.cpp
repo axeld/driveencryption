@@ -1,5 +1,5 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -15,6 +15,7 @@
 #include <Button.h>
 #include <MessageRunner.h>
 #include <Slider.h>
+#include <String.h>
 #include <TextControl.h>
 
 
