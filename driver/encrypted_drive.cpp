@@ -20,8 +20,14 @@
 
 #include "crypt.h"
 
-//#define TRACE(x) dprintf x
-#define TRACE(x) ;
+
+//#define TRACE_DRIVER
+#ifdef TRACE_DRIVER
+#	define TRACE(x) dprintf x
+#else
+#	define TRACE(x) ;
+#endif
+
 
 static int dev_index_for_path(const char *path);
 
@@ -153,9 +159,13 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 		return B_BAD_VALUE;
 
 	bool readOnly = initInfo->read_only;
+	mode_t mode = readOnly ? O_RDONLY : O_RDWR;
+#ifdef __HAIKU__
+	mode |= O_NOCACHE;
+#endif
 
 	// open the file
-	int fd = open(initInfo->file_name, readOnly ? O_RDONLY : O_RDWR);
+	int fd = open(initInfo->file_name, mode);
 	if (fd < 0)
 		return errno;
 
@@ -200,6 +210,7 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 		// Disable caching for underlying file! (else this driver will deadlock)
 		// We probably cannot resize the file once the cache has been disabled!
 
+#ifndef __HAIKU__
 		// This applies to BeOS only:
 		// Work around a bug in BFS: the file is not synced before the cache is
 		// turned off, and thus causing possible inconsistencies.
@@ -214,6 +225,7 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 			dprintf("encrypted_drive: disable caching ioctl failed\n");
 			return errno;
 		}
+#endif
 	}
 
 	if (error < B_OK) {
