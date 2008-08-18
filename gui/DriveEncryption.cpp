@@ -14,6 +14,7 @@
 #include <TextView.h>
 
 #include "DriveWindow.h"
+#include "encrypted_drive.h"
 
 
 class DriveEncryption : public BApplication {
@@ -31,6 +32,7 @@ private:
 	void _LoadSettings();
 	void _SaveSettings();
 	void _UpdateSettingsFrom(BMessage* message);
+	bool _TestForDriver();
 
 	BMessenger	fWindowMessenger;
 	BMessage	fSettings;
@@ -135,9 +137,31 @@ DriveEncryption::_UpdateSettingsFrom(BMessage* message)
 }
 
 
+bool
+DriveEncryption::_TestForDriver()
+{
+	// open the control device
+	int fd = open(ENCRYPTED_DRIVE_CONTROL_DEVICE, O_RDONLY);
+	if (fd >= 0) {
+		close(fd);
+		return true;
+	}
+
+	BAlert *alert = new BAlert("error",
+		"Could not open encrypted control device", "Ok", NULL, NULL,
+		B_WIDTH_AS_USUAL, B_STOP_ALERT);
+	alert->Go();
+}
+
+
 void
 DriveEncryption::ReadyToRun()
 {
+	if (!_TestForDriver()) {
+		Quit();
+		return;
+	}
+
 	_LoadSettings();
 
 	BWindow* window = new DriveWindow(fSettings);

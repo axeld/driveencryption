@@ -1,5 +1,5 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -17,18 +17,35 @@
 
 extern "C" const char *__progname;
 
-const char *kUsage = "Usage: %s [ --install ] [--read-only] [ --key <password> ] <file>\n"
-	"       %s --uninstall  <device>\n"
-	"       %s --init [--key <password>] <file>\n"
-	"       %s --list\n"
-	"       %s ( --help | -h )\n";
+const char* kProgramName = __progname;
 
 
 static void
 print_usage(bool error = false)
 {
-	const char *name = __progname;
-	fprintf(error ? stderr : stdout, kUsage, name, name, name, name);
+	fprintf(error ? stderr : stdout,
+		"Usage: %s [ --install ] [--read-only] [ --key <password> ] <file>\n"
+		"       %s --uninstall  <device>\n"
+		"       %s --init [--key <password>] <file>\n"
+		"       %s --list\n"
+		"       %s ( --help | -h )\n",
+		kProgramName, kProgramName, kProgramName, kProgramName, kProgramName);
+}
+
+
+static void
+test_for_driver()
+{
+	// open the control device
+	int fd = open(ENCRYPTED_DRIVE_CONTROL_DEVICE, O_RDONLY);
+	if (fd >= 0) {
+		close(fd);
+		return;
+	}
+
+	fprintf(stderr, "%s: Failed to open control device: %s\n", kProgramName,
+		strerror(errno));
+	exit(1);
 }
 
 
@@ -39,8 +56,8 @@ install_file(const char *file, bool readOnly, const uint8* key,
 	// open the control device
 	int fd = open(ENCRYPTED_DRIVE_CONTROL_DEVICE, O_RDONLY);
 	if (fd < 0) {
-		fprintf(stderr, "Failed to open control device: %s\n",
-				strerror(errno));
+		fprintf(stderr, "%s: Failed to open control device: %s\n", kProgramName,
+			strerror(errno));
 		return errno;
 	}
 
@@ -104,7 +121,8 @@ install_file(const char *file, bool readOnly, const uint8* key,
 			? ENCRYPTED_DRIVE_INITIALIZE_FILE : ENCRYPTED_DRIVE_REGISTER_FILE,
 			&info) != 0) {
 		error = errno;
-		fprintf(stderr, "Failed to install device: %s\n", strerror(error));
+		fprintf(stderr, "%s: Failed to install device: %s\n", kProgramName,
+			strerror(error));
 	} else {
 		printf("File \"%s\" registered as device \"%s\".\n", file,
 			info.device_name);
@@ -121,8 +139,8 @@ uninstall_file(const char *device)
 	// open the device
 	int fd = open(device, O_RDONLY);
 	if (fd < 0) {
-		fprintf(stderr, "Failed to open device \"%s\": %s\n",
-				device, strerror(errno));
+		fprintf(stderr, "%s: Failed to open device \"%s\": %s\n", kProgramName,
+			device, strerror(errno));
 		return errno;
 	}
 
@@ -130,7 +148,8 @@ uninstall_file(const char *device)
 	status_t error = B_OK;
 	if (ioctl(fd, ENCRYPTED_DRIVE_UNREGISTER_FILE, NULL) != 0) {
 		error = errno;
-		fprintf(stderr, "Failed to uninstall device: %s\n", strerror(error));
+		fprintf(stderr, "%s: Failed to uninstall device: %s\n", kProgramName,
+			strerror(error));
 	}
 	// close the control device
 	close(fd);
@@ -211,7 +230,8 @@ main(int argc, const char **argv)
 				keyLength = strlen((char*)key);
 				argIndex++;
 			} else {
-				fprintf(stderr, "Invalid option \"-%s\".\n", arg);
+				fprintf(stderr, "%s: Invalid option \"-%s\".\n", kProgramName,
+					arg);
 				print_usage(true);
 				return 1;
 			}
@@ -225,7 +245,8 @@ main(int argc, const char **argv)
 						print_usage();
 						return 0;
 					default:
-						fprintf(stderr, "Invalid option \"-%c\".\n", arg[i]);
+						fprintf(stderr, "%s: Invalid option \"-%c\".\n",
+							kProgramName, arg[i]);
 						print_usage(true);
 						return 1;
 				}
@@ -239,6 +260,8 @@ main(int argc, const char **argv)
 		return 1;
 	}
 	const char* file = argv[argIndex];
+
+	test_for_driver();
 
 	// do the job
 	switch (mode) {
