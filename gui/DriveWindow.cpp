@@ -578,8 +578,8 @@ DriveWindow::DriveWindow(const BMessage& settings)
 
 	for (int32 i = 0; i < 10; i++) {
 		char path[B_PATH_NAME_LENGTH];
-		snprintf(path, B_PATH_NAME_LENGTH, "%s/%ld", ENCRYPTED_DRIVE_DIRECTORY,
-			i);
+		snprintf(path, B_PATH_NAME_LENGTH, "%s/%ld/raw",
+			ENCRYPTED_DRIVE_DIRECTORY, i);
 
 		// open the device
 		int fd = open(path, O_RDONLY);

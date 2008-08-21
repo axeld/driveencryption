@@ -32,16 +32,16 @@
 static int dev_index_for_path(const char *path);
 
 static const char *sDeviceName[] = {
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/0",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/1",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/2",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/3",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/4",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/5",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/6",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/7",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/8",
-	ENCRYPTED_DRIVE_DIRECTORY_REL "/9",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/0/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/1/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/2/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/3/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/4/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/5/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/6/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/7/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/8/raw",
+	ENCRYPTED_DRIVE_DIRECTORY_REL "/9/raw",
 	ENCRYPTED_DRIVE_CONTROL_DEVICE_REL,
 	NULL
 };
@@ -481,7 +481,7 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 	else
 		*numBytes = bytesRead;
 
-	decrypt_block(info.context, (uint8*)buffer, bytesRead,
+	info.context.decrypt_block(info.context, (uint8*)buffer, bytesRead,
 		position / info.geometry.bytes_per_sector);
 
 	unlock_driver();
@@ -531,7 +531,7 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 		size_t bytes = min_c(bytesLeft, sizeof(sBuffer));
 		memcpy(sBuffer, buffer, bytes);
 
-		encrypt_block(info.context, sBuffer, bytes,
+		info.context.encrypt_block(info.context, sBuffer, bytes,
 			position / info.geometry.bytes_per_sector);
 
 		ssize_t bytesWritten = write_pos(info.fd, position + info.context.offset,

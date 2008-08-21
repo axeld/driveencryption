@@ -160,12 +160,12 @@ uninstall_file(const char *device)
 void
 list_devices()
 {
-	printf("%-30s  %s\n--\n", "Device", "Uses");
+	printf("%-34s  %s\n--\n", "Device", "Uses");
 
 	for (int32 i = 0; i < 10; i++) {
 		char path[B_PATH_NAME_LENGTH];
-		snprintf(path, B_PATH_NAME_LENGTH, "%s/%ld", ENCRYPTED_DRIVE_DIRECTORY,
-			i);
+		snprintf(path, B_PATH_NAME_LENGTH, "%s/%ld/raw",
+			ENCRYPTED_DRIVE_DIRECTORY, i);
 
 		// open the device
 		int fd = open(path, O_RDONLY);
@@ -180,7 +180,7 @@ list_devices()
 		// issue the ioctl
 		status_t error = B_OK;
 		if (ioctl(fd, ENCRYPTED_DRIVE_GET_INFO, &info) == 0) {
-			printf("%-30s  %s%s%s\n", info.device_name, info.file_name,
+			printf("%-34s  %s%s%s\n", info.device_name, info.file_name,
 				info.hidden ? " (hidden)" : "",
 				info.read_only ? " (read-only)" : "");
 		}
