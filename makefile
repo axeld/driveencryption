@@ -1,5 +1,6 @@
 all: default
 default install:
+	@cd lib; make -f makefile $@
 	@cd driver; make -f makefile $@
 	@cd bin; make -f makefile $@
 	@cd gui; make -f makefile $@

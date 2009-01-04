@@ -2,13 +2,14 @@
 #define CRYPT_H
 
 
-#include "aes.h"
+//#include "aes.h"
 #include "gf_mul.h"
 
 
 #define PKCS5_SALT_SIZE		64
 #define SECONDARY_KEY_SIZE	32
-#define KEY_SIZE			(sizeof(aes_encrypt_ctx) + sizeof(aes_decrypt_ctx))
+#define KEY_SIZE			128
+//#define KEY_SIZE			(sizeof(aes_encrypt_ctx) + sizeof(aes_decrypt_ctx))
 
 struct crypt_context;
 
