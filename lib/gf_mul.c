@@ -466,7 +466,7 @@ MirrorBits128(uint8 *a)
 	for multiplication by 64-bit operand in MSB-first mode
 */
 int
-gf128_tab64_init(uint8 *a, galois_field_context *ctx)
+gf128_tab64_init(const uint8 *a, galois_field_context *ctx)
 {
 	GfCtx8k *ctx8k;
 	uint8 am[16];

@@ -637,7 +637,8 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 					if (error == B_OK) {
 						// return the device path
 						strcpy(driveInfo->device_name, "/dev/");
-						strcat(driveInfo->device_name, gDeviceInfos[i].device_path);
+						strcat(driveInfo->device_name,
+							gDeviceInfos[i].device_path);
 
 						// on the first registration we need to open the
 						// control device to stay loaded

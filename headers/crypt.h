@@ -2,30 +2,25 @@
 #define CRYPT_H
 
 
-//#include "aes.h"
-#include "gf_mul.h"
+#include <SupportDefs.h>
 
 
 #define PKCS5_SALT_SIZE		64
 #define SECONDARY_KEY_SIZE	32
-#define KEY_SIZE			128
+#define KEY_SIZE			128*4
 //#define KEY_SIZE			(sizeof(aes_encrypt_ctx) + sizeof(aes_decrypt_ctx))
 
-struct crypt_context;
-
-typedef void (*crypt_block_func)(struct crypt_context& context, uint8 *data,
-	uint32 length, uint64 blockIndex);
+class EncryptionAlgorithm;
+class EncryptionMode;
 
 struct crypt_context {
-	struct galois_field_context gf_context;
-	uint8				key_salt[PKCS5_SALT_SIZE];
-	uint8				secondary_key[SECONDARY_KEY_SIZE];
-	uint8				key_schedule[KEY_SIZE];
-	off_t				offset;
-	off_t				size;
-	bool				hidden;
-	crypt_block_func	decrypt_block;
-	crypt_block_func	encrypt_block;
+	uint8					key_salt[PKCS5_SALT_SIZE];
+	uint8					secondary_key[SECONDARY_KEY_SIZE];
+	off_t					offset;
+	off_t					size;
+	bool					hidden;
+	EncryptionAlgorithm*	algorithm;
+	EncryptionMode*			mode;
 };
 
 

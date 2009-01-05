@@ -5,14 +5,16 @@
 #include <KernelExport.h>
 
 #include <errno.h>
+#include <new>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "ripemd160.h"
 #include "aes.h"
 #include "crc32.h"
+#include "gf_mul.h"
+#include "ripemd160.h"
 
 
 const uint32 kTrueCryptMagic = 'TRUE';
@@ -22,7 +24,6 @@ const uint32 kTrueCryptMagic = 'TRUE';
 #define RIPEMD160_ITERATIONS		2000
 #define BYTES_PER_XTS_BLOCK			16
 #define BLOCKS_PER_XTS_DATA_UNIT	(BLOCK_SIZE / BYTES_PER_XTS_BLOCK)
-
 
 struct true_crypt_header {
 	uint8	salt[PKCS5_SALT_SIZE];
@@ -37,6 +38,122 @@ struct true_crypt_header {
 	uint8	secondary_key[SECONDARY_KEY_SIZE];
 	uint8	master_key[224];
 } _PACKED;
+
+
+class ThreadContext {
+public:
+	ThreadContext(struct crypt_context& context);
+	ThreadContext(const ThreadContext& context);
+	~ThreadContext();
+
+	int32 AddBuffer(size_t size);
+	void* BufferFor(int32 index);
+	void Reset();
+
+	crypt_context& Context() { return fContext; }
+
+private:
+	size_t _CapacityFor(size_t size);
+
+	crypt_context&	fContext;
+	void*			fBuffer;
+	size_t			fBufferSize;
+	int32			fFirstFree;
+};
+
+class EncryptionAlgorithm {
+public:
+	EncryptionAlgorithm() {}
+	virtual ~EncryptionAlgorithm() {}
+
+	virtual status_t Init(ThreadContext& context) = 0;
+	virtual status_t SetKey(ThreadContext& context, const uint8* key,
+		size_t keyLength) = 0;
+
+	virtual EncryptionAlgorithm* Clone(ThreadContext& context) = 0;
+
+	virtual void Decrypt(ThreadContext& context, uint8 *data,
+		size_t length) = 0;
+	virtual void Encrypt(ThreadContext& context, uint8 *data,
+		size_t length) = 0;
+};
+
+class AESAlgorithm : public EncryptionAlgorithm {
+public:
+	AESAlgorithm();
+	virtual ~AESAlgorithm();
+
+	virtual status_t Init(ThreadContext& context);
+	virtual status_t SetKey(ThreadContext& context, const uint8* key,
+		size_t keyLength);
+
+	virtual EncryptionAlgorithm* Clone(ThreadContext& context);
+ 
+	virtual void Decrypt(ThreadContext& context, uint8 *data,
+		size_t length);
+	virtual void Encrypt(ThreadContext& context, uint8 *data,
+		size_t length);
+
+private:
+	int32	fEncryptScheduler;
+	int32	fDecryptScheduler;
+};
+
+class EncryptionMode {
+public:
+	EncryptionMode() {}
+	virtual ~EncryptionMode() {}
+
+	virtual status_t Init(ThreadContext& context,
+		EncryptionAlgorithm* algorithm) = 0;
+	virtual status_t SetKey(ThreadContext& context, const uint8* key,
+		size_t keyLength) = 0;
+
+	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length,
+		uint64 blockIndex = 0) = 0;
+	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length,
+		uint64 blockIndex = 0) = 0;
+};
+
+class XTSMode : public EncryptionMode {
+public:
+	XTSMode();
+	virtual ~XTSMode();
+
+	virtual status_t Init(ThreadContext& context,
+		EncryptionAlgorithm* algorithm);
+	virtual status_t SetKey(ThreadContext& context, const uint8* key,
+		size_t keyLength);
+ 
+	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length,
+		uint64 blockIndex = 0);
+	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length,
+		uint64 blockIndex = 0);
+
+protected:
+	EncryptionAlgorithm*	fAlgorithm;
+	EncryptionAlgorithm*	fSecondaryAlgorithm;
+};
+
+class LRWMode : public EncryptionMode {
+public:
+	LRWMode();
+	virtual ~LRWMode();
+
+	virtual status_t Init(ThreadContext& context,
+		EncryptionAlgorithm* algorithm);
+	virtual status_t SetKey(ThreadContext& context, const uint8* key,
+		size_t keyLength);
+ 
+	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length,
+		uint64 blockIndex = 0);
+	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length,
+		uint64 blockIndex = 0);
+
+protected:
+	EncryptionAlgorithm*	fAlgorithm;
+	int32					fGaloisField;
+};
 
 
 //	#pragma mark - RIPEMD160 key computation
@@ -185,10 +302,12 @@ xor128(uint64 *a, uint64 *b)
 static void
 dump_true_crypt_header(true_crypt_header& header)
 {
-	//dprintf("magic: %.4s\n", header.magic);
-	dprintf("version: %x\n", header.version);
+	dprintf("magic: %.4s\n", (char*)&header.magic);
+	dprintf("version: %x\n", B_BENDIAN_TO_HOST_INT16(header.version));
 	dprintf("required program version: %x\n", header.required_program_version);
-	dprintf("crc checksum: %ld\n", header.crc_checksum);
+	dprintf("crc checksum: %lu (%lu)\n",
+		B_BENDIAN_TO_HOST_INT32(header.crc_checksum),
+		crc32(header.secondary_key, 256));
 	dprintf("volume creation time: %Ld\n", header.volume_creation_time);
 	dprintf("header creation time: %Ld\n", header.header_creation_time);
 	dprintf("hidden size: %Ld\n", B_BENDIAN_TO_HOST_INT64(header.hidden_size));
@@ -242,22 +361,63 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 	memcpy(context.key_salt, header.salt, PKCS5_SALT_SIZE);
 
 	derive_key_ripemd160(key, keyLength, context.key_salt, PKCS5_SALT_SIZE,
-		RIPEMD160_ITERATIONS, diskKey, SECONDARY_KEY_SIZE + 32);
+		RIPEMD160_ITERATIONS, diskKey, SECONDARY_KEY_SIZE + 64);
 	memcpy(context.secondary_key, diskKey, SECONDARY_KEY_SIZE);
-	gf128_tab64_init(context.secondary_key, &context.gf_context);
-	init_key(context, diskKey + SECONDARY_KEY_SIZE);
 
-	decrypt_buffer(context, buffer + PKCS5_SALT_SIZE,
+	EncryptionAlgorithm* algorithm = new(std::nothrow) AESAlgorithm();
+	if (algorithm == NULL)
+		return B_NO_MEMORY;
+
+	ThreadContext threadContext(context);
+
+	status_t status = algorithm->Init(threadContext);
+	if (status != B_OK)
+		return status;
+
+	algorithm->SetKey(threadContext, diskKey, SECONDARY_KEY_SIZE);
+
+	EncryptionMode* mode = new(std::nothrow) XTSMode();
+	if (mode == NULL) {
+		delete algorithm;
+		return B_NO_MEMORY;
+	}
+
+	status = mode->Init(threadContext, algorithm);
+	if (status != B_OK) {
+		delete algorithm;
+		delete mode;
+		return status;
+	}
+
+	mode->SetKey(threadContext, diskKey + SECONDARY_KEY_SIZE, 32);
+	mode->Decrypt(threadContext, buffer + PKCS5_SALT_SIZE,
 		BLOCK_SIZE - PKCS5_SALT_SIZE);
 	if (!valid_true_crypt_header(header)) {
 		// Try with legacy encryption mode LRW instead
-		context.decrypt_block = decrypt_block_lrw;
-		context.encrypt_block = encrypt_block_lrw;
+		threadContext.Reset();
+		delete mode;
 
-		decrypt_buffer(context, buffer + PKCS5_SALT_SIZE,
+		mode = new(std::nothrow) LRWMode();
+		if (mode == NULL) {
+			delete algorithm;
+			return B_NO_MEMORY;
+		}
+	
+		status = mode->Init(threadContext, algorithm);
+		if (status != B_OK) {
+			delete algorithm;
+			delete mode;
+			return status;
+		}
+
+		mode->SetKey(threadContext, diskKey + SECONDARY_KEY_SIZE, 32);
+		mode->Decrypt(threadContext, buffer + PKCS5_SALT_SIZE,
 			BLOCK_SIZE - PKCS5_SALT_SIZE);
 		if (!valid_true_crypt_header(header)) {
-	dump_true_crypt_header(header);
+			delete algorithm;
+			delete mode;
+			
+			dump_true_crypt_header(header);
 			return B_PERMISSION_DENIED;
 		}
 	}
@@ -266,9 +426,9 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 
 	// then init context with the keys from the unencrypted header
 
-	init_key(context, header.master_key);
-	memcpy(context.secondary_key, header.secondary_key, SECONDARY_KEY_SIZE);
-	gf128_tab64_init(context.secondary_key, &context.gf_context);
+	algorithm->SetKey(threadContext, header.master_key, 32);
+	mode->SetKey(threadContext, header.master_key, 32);
+	//memcpy(context.secondary_key, header.secondary_key, SECONDARY_KEY_SIZE);
 
 	if (offset != 0) {
 		// this is a hidden drive, take over the size from the header
@@ -281,38 +441,460 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 }
 
 
-//	#pragma mark - exported API
+//	#pragma mark - ThreadContext
+
+
+ThreadContext::ThreadContext(struct crypt_context& context)
+	:
+	fContext(context),
+	fBuffer(NULL),
+	fBufferSize(0),
+	fFirstFree(0)
+{
+}
+
+
+ThreadContext::ThreadContext(const ThreadContext& context)
+	:
+	fContext(context.fContext)
+{
+	fBuffer = malloc(context.fBufferSize);
+	if (fBuffer != NULL) {
+		fBufferSize = context.fBufferSize;
+		fFirstFree = context.fFirstFree;
+		memcpy(fBuffer, context.fBuffer, fFirstFree);
+	} else {
+		fBufferSize = 0;
+		fFirstFree = 0;
+	}
+}
+
+
+ThreadContext::~ThreadContext()
+{
+	free(fBuffer);
+}
+
+
+int32
+ThreadContext::AddBuffer(size_t size)
+{
+	if (size == 0)
+		return B_BAD_VALUE;
+
+	if (size < fBufferSize - fFirstFree) {
+		// there is still enough space available
+		int32 index = fFirstFree;
+		fFirstFree += size;
+		return index;
+	}
+
+	// We need to resize our buffer in order to make space
+
+	size_t newSize = _CapacityFor(fFirstFree + size);
+	void* buffer = realloc(fBuffer, newSize);
+	if (buffer == NULL)
+		return B_NO_MEMORY;
+
+	fBuffer = buffer;
+	fBufferSize = newSize;
+	int32 index = fFirstFree;
+	fFirstFree += size;
+
+	return index;
+}
+
+
+void*
+ThreadContext::BufferFor(int32 index)
+{
+	return (void*)((uint8*)fBuffer + index);
+}
+
+
+void
+ThreadContext::Reset()
+{
+	free(fBuffer);
+	fBufferSize = 0;
+	fBuffer = NULL;
+	fFirstFree = 0;
+}
+
+
+/*!	Returns the capacity for allocating a chunk of size bytes.
+	In fact, this will return the closest power of two number of bytes higher
+	as \a size.
+*/
+size_t
+ThreadContext::_CapacityFor(size_t size)
+{
+	if (size > (1UL << 30))
+		return size;
+
+	int32 nextPowerOfTwo = 64;
+	while (nextPowerOfTwo < size) {
+		nextPowerOfTwo <<= 1;
+	}
+	return nextPowerOfTwo;
+}
+
+
+//	#pragma mark - Encryption algorithms
+
+
+AESAlgorithm::AESAlgorithm()
+	:
+	fEncryptScheduler(-1),
+	fDecryptScheduler(-1)
+{
+}
+
+
+AESAlgorithm::~AESAlgorithm()
+{
+}
 
 
 status_t
-init_key(crypt_context& context, uint8* diskKey)
+AESAlgorithm::Init(ThreadContext& context)
 {
-	if (aes_encrypt_key(diskKey, 32, (aes_encrypt_ctx *)context.key_schedule)
-			!= EXIT_SUCCESS)
+	// Make space for our key schedule buffer
+	fEncryptScheduler = context.AddBuffer(sizeof(aes_encrypt_ctx));
+	fDecryptScheduler = context.AddBuffer(sizeof(aes_decrypt_ctx));
+	if (fEncryptScheduler < 0 || fDecryptScheduler < 0)
+		return B_NO_MEMORY;
+
+	return B_OK;
+}
+
+
+status_t
+AESAlgorithm::SetKey(ThreadContext& context, const uint8* key,
+	size_t keyLength)
+{
+	if (aes_encrypt_key(key, keyLength,
+			(aes_encrypt_ctx*)context.BufferFor(fEncryptScheduler))
+				!= EXIT_SUCCESS)
 		return B_ERROR;
 
-	if (aes_decrypt_key(diskKey, 32, (aes_decrypt_ctx *)(context.key_schedule
-			+ sizeof(aes_encrypt_ctx))) != EXIT_SUCCESS)
+	if (aes_decrypt_key(key, keyLength,
+			(aes_decrypt_ctx*)context.BufferFor(fDecryptScheduler))
+				!= EXIT_SUCCESS)
 		return B_ERROR;
 
 	return B_OK;
 }
 
 
+EncryptionAlgorithm*
+AESAlgorithm::Clone(ThreadContext& context)
+{
+	AESAlgorithm* clone = new (std::nothrow) AESAlgorithm();
+	if (clone == NULL)
+		return NULL;
+
+	// Copy our schedule data
+	clone->fEncryptScheduler = context.AddBuffer(sizeof(aes_encrypt_ctx));
+	clone->fDecryptScheduler = context.AddBuffer(sizeof(aes_decrypt_ctx));
+	if (clone->fEncryptScheduler < 0 || clone->fDecryptScheduler < 0) {
+		delete clone;
+		return NULL;
+	}
+	
+	memcpy(context.BufferFor(clone->fEncryptScheduler),
+		context.BufferFor(fEncryptScheduler), sizeof(aes_encrypt_ctx));
+	memcpy(context.BufferFor(clone->fDecryptScheduler),
+		context.BufferFor(fDecryptScheduler), sizeof(aes_decrypt_ctx));
+
+	return clone;
+}
+
+
+void
+AESAlgorithm::Decrypt(ThreadContext& context, uint8 *data, size_t length)
+{
+	aes_decrypt(data, data,
+		(const aes_decrypt_ctx*)context.BufferFor(fDecryptScheduler));
+}
+
+
+void
+AESAlgorithm::Encrypt(ThreadContext& context, uint8 *data, size_t length)
+{
+	aes_encrypt(data, data,
+		(const aes_encrypt_ctx*)context.BufferFor(fEncryptScheduler));
+}
+
+
+//	#pragma mark - Encryption modes
+
+
+XTSMode::XTSMode()
+	:
+	fAlgorithm(NULL),
+	fSecondaryAlgorithm(NULL)
+{
+}
+
+
+XTSMode::~XTSMode()
+{
+	delete fSecondaryAlgorithm;
+}
+
+
+status_t
+XTSMode::Init(ThreadContext& context, EncryptionAlgorithm* algorithm)
+{
+	if (algorithm == NULL)
+		return B_BAD_VALUE;
+
+	fAlgorithm = algorithm;
+
+	fSecondaryAlgorithm = algorithm->Clone(context);
+	if (fSecondaryAlgorithm == NULL)
+		return B_NO_MEMORY;
+
+	return B_OK;
+}
+
+
+status_t
+XTSMode::SetKey(ThreadContext& context, const uint8* key, size_t keyLength)
+{
+	return fSecondaryAlgorithm->SetKey(context, key, keyLength);
+}
+
+
+void
+XTSMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
+	uint64 blockIndex)
+{
+	uint8 finalCarry;
+	uint8 whiteningValue[BYTES_PER_XTS_BLOCK];
+	uint8 byteBufUnitNo[BYTES_PER_XTS_BLOCK];
+	uint64* bufPtr = (uint64*)data;
+	uint32 startBlock = 0;//blockIndex;
+	uint32 endBlock, block;
+	uint64 blockCount, dataUnitNo;
+
+	// Convert the 64-bit data unit number into a little-endian 16-byte array. 
+	dataUnitNo = blockIndex;
+	*((uint64*)byteBufUnitNo) = B_HOST_TO_LENDIAN_INT64(dataUnitNo);
+	*((uint64*)byteBufUnitNo + 1) = 0;
+
+	//ASSERT((length % BYTES_PER_XTS_BLOCK) == 0);
+
+	blockCount = length / BYTES_PER_XTS_BLOCK;
+
+	// Process all blocks in the buffer
+	while (blockCount > 0) {
+		if (blockCount < BLOCKS_PER_XTS_DATA_UNIT)
+			endBlock = startBlock + (uint32)blockCount;
+		else
+			endBlock = BLOCKS_PER_XTS_DATA_UNIT;
+
+		uint64* whiteningValuePtr64 = (uint64*)whiteningValue;
+
+		// Encrypt the data unit number using the secondary key (in order to
+		// generate the first whitening value for this data unit)
+		*whiteningValuePtr64 = *((uint64*)byteBufUnitNo);
+		*(whiteningValuePtr64 + 1) = 0;
+		fSecondaryAlgorithm->Encrypt(context, (uint8*)whiteningValue,
+			BYTES_PER_XTS_BLOCK);
+
+		// Generate (and apply) subsequent whitening values for blocks in this
+		// data unit and decrypt all relevant blocks in this data unit
+		for (block = 0; block < endBlock; block++) {
+			if (block >= startBlock) {
+				// Post-whitening
+				*bufPtr++ ^= *whiteningValuePtr64++;
+				*bufPtr-- ^= *whiteningValuePtr64--;
+
+				// Actual decryption
+				fAlgorithm->Decrypt(context, (uint8*)bufPtr,
+					BYTES_PER_XTS_BLOCK);
+ 
+				// Pre-whitening
+				*bufPtr++ ^= *whiteningValuePtr64++;
+				*bufPtr++ ^= *whiteningValuePtr64;
+			}
+			else
+				whiteningValuePtr64++;
+
+			// Derive the next whitening value
+
+#if BYTE_ORDER == LITTLE_ENDIAN
+			// Little-endian platforms
+			finalCarry = (*whiteningValuePtr64 & 0x8000000000000000ULL) ? 135 : 0;
+
+			*whiteningValuePtr64-- <<= 1;
+
+			if (*whiteningValuePtr64 & 0x8000000000000000ULL)
+				*(whiteningValuePtr64 + 1) |= 1;	
+
+			*whiteningValuePtr64 <<= 1;
+#else
+			// Big-endian platforms
+			finalCarry = (*whiteningValuePtr64 & 0x80) ? 135 : 0;
+
+			*whiteningValuePtr64 = LE64(LE64(*whiteningValuePtr64) << 1);
+
+			whiteningValuePtr64--;
+
+			if (*whiteningValuePtr64 & 0x80)
+				*(whiteningValuePtr64 + 1) |= 0x0100000000000000ULL;
+
+			*whiteningValuePtr64 = B_HOST_TO_LENDIAN_INT64(
+				B_HOST_TO_LENDIAN_INT64(*whiteningValuePtr64) << 1);
+#endif
+
+			whiteningValue[0] ^= finalCarry;
+		}
+
+		blockCount -= endBlock - startBlock;
+		startBlock = 0;
+		dataUnitNo++;
+		*((uint64*)byteBufUnitNo) = B_HOST_TO_LENDIAN_INT64(dataUnitNo);
+	}
+
+	memset(whiteningValue, 0, sizeof(whiteningValue));
+}
+
+
+void
+XTSMode::Encrypt(ThreadContext& context, uint8 *data, size_t length,
+	uint64 blockIndex)
+{
+}
+
+
+//	#pragma mark -
+
+
+LRWMode::LRWMode()
+	:
+	fAlgorithm(NULL)
+{
+}
+
+
+LRWMode::~LRWMode()
+{
+}
+
+
+status_t
+LRWMode::Init(ThreadContext& context, EncryptionAlgorithm* algorithm)
+{
+	if (algorithm == NULL)
+		return B_BAD_VALUE;
+
+	fGaloisField = context.AddBuffer(sizeof(struct galois_field_context));
+	if (fGaloisField < 0)
+		return B_NO_MEMORY;
+
+	fAlgorithm = algorithm;
+	return B_OK;
+}
+
+
+status_t
+LRWMode::SetKey(ThreadContext& context, const uint8* key, size_t keyLength)
+{
+	gf128_tab64_init(key,
+		(struct galois_field_context*)context.BufferFor(fGaloisField));
+
+	return B_OK;
+}
+
+
+void
+LRWMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
+	uint64 blockIndex)
+{
+	uint8 i[8];
+	uint8 t[16];
+	int b;
+
+	blockIndex = (blockIndex << 5) + 1;
+	*(uint64*)i = B_HOST_TO_BENDIAN_INT64(blockIndex);
+
+	for (b = 0; b < length >> 4; b++) {
+		gf128_mul_by_tab64(i, t,
+			(galois_field_context*)context.BufferFor(fGaloisField));
+		xor128((uint64*)data, (uint64 *)t);
+
+		fAlgorithm->Decrypt(context, data, 16);
+
+		xor128((uint64*)data, (uint64*)t);
+
+		data += 16;
+
+		if (i[7] != 0xff)
+			i[7]++;
+		else {
+			*(uint64*)i = B_HOST_TO_BENDIAN_INT64(
+				B_BENDIAN_TO_HOST_INT64(*(uint64*)i) + 1);
+		}
+	}
+
+	memset(t, 0, sizeof (t));
+}
+
+
+void
+LRWMode::Encrypt(ThreadContext& context, uint8 *data, size_t length,
+	uint64 blockIndex)
+{
+	uint8 i[8];
+	uint8 t[16];
+	uint32 b;
+
+	blockIndex = (blockIndex << 5) + 1;
+	*(uint64*)i = B_HOST_TO_BENDIAN_INT64(blockIndex);
+
+	for (b = 0; b < length >> 4; b++) {
+		gf128_mul_by_tab64(i, t,
+			(galois_field_context*)context.BufferFor(fGaloisField));
+		xor128((uint64*)data, (uint64*)t);
+
+		fAlgorithm->Encrypt(context, data, 16);
+
+		xor128((uint64*)data, (uint64*)t);
+
+		data += 16;
+
+		if (i[7] != 0xff)
+			i[7]++;
+		else {
+			*(uint64*)i = B_HOST_TO_BENDIAN_INT64(
+				B_BENDIAN_TO_HOST_INT64(*(uint64*)i) + 1);
+		}
+	}
+
+	memset(t, 0, sizeof (t));
+}
+
+
+//	#pragma mark - exported API
+
+
 void
 encrypt_buffer(crypt_context& context, uint8 *buffer, uint32 length)
 {
-	context.encrypt_block(context, (uint8 *)buffer, length, 0);
+	//mode->Encrypt(context, buffer, length);
 }
 
 
 void
 decrypt_buffer(crypt_context& context, uint8 *buffer, uint32 length)
 {
-	context.decrypt_block(context, (uint8 *)buffer, length, 0);
+	//mode->Decrypt(context, buffer, length);
 }
 
-
+#if 0
 void
 encrypt_block_xts(crypt_context& context, uint8 *data, uint32 length,
 	uint64 blockIndex)
@@ -593,7 +1175,7 @@ decrypt_block_lrw(crypt_context& context, uint8* data, uint32 length,
 
 	memset(t, 0, sizeof (t));
 }
-
+#endif
 
 status_t
 detect_drive(crypt_context& context, int fd, const uint8* key, uint32 keyLength)
@@ -610,8 +1192,7 @@ detect_drive(crypt_context& context, int fd, const uint8* key, uint32 keyLength)
 	if (detect(context, fd, 0, key, keyLength) == B_OK)
 		return B_OK;
 
-	return detect(context, fd, size - HIDDEN_HEADER_OFFSET, key,
-		keyLength);
+	return detect(context, fd, size - HIDDEN_HEADER_OFFSET, key, keyLength);
 }
 
 
@@ -619,6 +1200,8 @@ status_t
 setup_drive(crypt_context& context, int fd, const uint8* key, uint32 keyLength,
 	const uint8* random, uint32 randomLength)
 {
+	return B_ERROR;
+#if 0
 	off_t size;
 	status_t status = get_size(fd, size);
 	if (status < B_OK)
@@ -674,6 +1257,7 @@ setup_drive(crypt_context& context, int fd, const uint8* key, uint32 keyLength,
 	gf128_tab64_init(context.secondary_key, &context.gf_context);
 
 	return B_OK;
+#endif
 }
 
 
@@ -681,7 +1265,5 @@ void
 init_context(crypt_context& context)
 {
 	memset(&context, 0, sizeof(crypt_context));
-	context.decrypt_block = decrypt_block_xts;
-	context.encrypt_block = encrypt_block_xts;
 }
 

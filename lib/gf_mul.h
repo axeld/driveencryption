@@ -54,7 +54,7 @@ typedef struct galois_field_context {
 } galois_field_context;
 
 
-int gf128_tab64_init(uint8 *a, galois_field_context *ctx);
+int gf128_tab64_init(const uint8 *a, galois_field_context *ctx);
 void gf128_mul_by_tab64(uint8 a[8], uint8 p[16], galois_field_context *ctx);
 
 #if defined(__cplusplus)

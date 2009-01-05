@@ -7,14 +7,14 @@
 ## Application Specific Settings ---------------------------------------------
 
 # specify the name of the binary
-NAME= libcrypt.a
+NAME= crypt_test
 
 # specify the type of binary
 #	APP:	Application
 #	SHARED:	Shared library or add-on
 #	STATIC:	Static library archive
 #	DRIVER: Kernel Driver
-TYPE= STATIC
+TYPE= APP
 
 #	specify the source files to use
 #	full paths or paths relative to the makefile can be included
@@ -24,8 +24,7 @@ TYPE= STATIC
 #	if two source files with the same name (source.c or source.cpp)
 #	are included from different directories.  Also note that spaces
 #	in folder names do not work well with this makefile.
-SRCS= crypt.cpp ripemd160.c gf_mul.c aescrypt.c \
-	aeskey.c aestab.c crc32.c
+SRCS= crypt_test.cpp
 
 #	specify the resource files to use
 #	full path or a relative path to the resource file can be used.
@@ -41,8 +40,8 @@ RSRCS=
 #		naming scheme you need to specify the path to the library
 #		and it's name
 #		library: my_lib.a entry: my_lib.a or path/my_lib.a
-LIBS= 
-	
+LIBS= ../lib/libcrypt.a
+
 #	specify additional paths to directories following the standard
 #	libXXX.so or libXXX.a naming scheme.  You can specify full paths
 #	or paths relative to the makefile.  The paths included may not
