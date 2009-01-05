@@ -1,3 +1,12 @@
+/*
+ * Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
+ * Distributed under the terms of the MIT License.
+ *
+ * The XTS/LRW modes and the RIPE160 code is distributed under the
+ * Truecrypt License.
+ */
+
+
 #include "crypt.h"
 
 #include <ByteOrder.h>
@@ -361,7 +370,7 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 	memcpy(context.key_salt, header.salt, PKCS5_SALT_SIZE);
 
 	derive_key_ripemd160(key, keyLength, context.key_salt, PKCS5_SALT_SIZE,
-		RIPEMD160_ITERATIONS, diskKey, SECONDARY_KEY_SIZE + 64);
+		RIPEMD160_ITERATIONS, diskKey, SECONDARY_KEY_SIZE + 32);
 	memcpy(context.secondary_key, diskKey, SECONDARY_KEY_SIZE);
 
 	EncryptionAlgorithm* algorithm = new(std::nothrow) AESAlgorithm();
@@ -402,6 +411,9 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 			delete algorithm;
 			return B_NO_MEMORY;
 		}
+
+		algorithm->Init(threadContext);
+		algorithm->SetKey(threadContext, diskKey + SECONDARY_KEY_SIZE, 32);
 	
 		status = mode->Init(threadContext, algorithm);
 		if (status != B_OK) {
@@ -416,7 +428,7 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 		if (!valid_true_crypt_header(header)) {
 			delete algorithm;
 			delete mode;
-			
+
 			dump_true_crypt_header(header);
 			return B_PERMISSION_DENIED;
 		}

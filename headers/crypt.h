@@ -1,3 +1,7 @@
+/*
+ * Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
+ * Distributed under the terms of the MIT License.
+ */
 #ifndef CRYPT_H
 #define CRYPT_H
 
@@ -7,8 +11,6 @@
 
 #define PKCS5_SALT_SIZE		64
 #define SECONDARY_KEY_SIZE	32
-#define KEY_SIZE			128*4
-//#define KEY_SIZE			(sizeof(aes_encrypt_ctx) + sizeof(aes_decrypt_ctx))
 
 class EncryptionAlgorithm;
 class EncryptionMode;
