@@ -59,7 +59,8 @@ public:
 	bool IsHidden() const { return fHidden; }
 
 protected:
-	status_t _Detect(int fd, off_t offset, const uint8* key, uint32 keyLength);
+	status_t _Detect(int fd, off_t offset, off_t size, const uint8* key,
+		uint32 keyLength);
 
 	off_t					fOffset;
 	off_t					fSize;

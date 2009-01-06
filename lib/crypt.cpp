@@ -44,8 +44,7 @@ struct true_crypt_header {
 	uint64	header_creation_time;
 	uint64	hidden_size;
 	uint8	_reserved[156];
-	uint8	secondary_key[32];
-	uint8	master_key[224];
+	uint8	disk_key[256];
 } _PACKED;
 
 
@@ -338,7 +337,7 @@ dump_true_crypt_header(true_crypt_header& header)
 	dprintf("required program version: %x\n", header.required_program_version);
 	dprintf("crc checksum: %lu (%lu)\n",
 		B_BENDIAN_TO_HOST_INT32(header.crc_checksum),
-		crc32(header.secondary_key, 256));
+		crc32(header.disk_key, 256));
 	dprintf("volume creation time: %Ld\n", header.volume_creation_time);
 	dprintf("header creation time: %Ld\n", header.header_creation_time);
 	dprintf("hidden size: %Ld\n", B_BENDIAN_TO_HOST_INT64(header.hidden_size));
@@ -350,7 +349,7 @@ valid_true_crypt_header(true_crypt_header& header)
 {
 	return header.magic == B_HOST_TO_BENDIAN_INT32(kTrueCryptMagic)
 		&& B_BENDIAN_TO_HOST_INT32(header.crc_checksum)
-				== crc32(header.secondary_key, 256);
+				== crc32(header.disk_key, 256);
 }
 
 
@@ -662,7 +661,7 @@ XTSMode::Init(ThreadContext& context, EncryptionAlgorithm* algorithm)
 status_t
 XTSMode::SetKey(ThreadContext& context, const uint8* key, size_t keyLength)
 {
-printf("xts key: %x\n", *(int*)key);
+//printf("xts key: %x\n", *(int*)key);
 	return fSecondaryAlgorithm->SetKey(context, key, keyLength);
 }
 
@@ -671,7 +670,7 @@ status_t
 XTSMode::SetCompleteKey(ThreadContext& context, const uint8* key,
 	size_t keyLength)
 {
-	return fSecondaryAlgorithm->SetKey(context, key + KEY_SIZE, KEY_SIZE);
+	return SetKey(context, key + KEY_SIZE, KEY_SIZE);
 }
 
 
@@ -812,7 +811,7 @@ LRWMode::Init(ThreadContext& context, EncryptionAlgorithm* algorithm)
 status_t
 LRWMode::SetKey(ThreadContext& context, const uint8* key, size_t keyLength)
 {
-printf("lrw key: %x\n", *(int*)key);
+//printf("lrw key: %x\n", *(int*)key);
 	gf128_tab64_init(key,
 		(struct galois_field_context*)context.BufferFor(fGaloisField));
 
@@ -938,21 +937,23 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 	if (status != B_OK)
 		return status;
 
-	SetKey(key, keyLength);
-
 	fThreadContexts = new(std::nothrow) ThreadContext(threadContext);
 	if (fThreadContexts == NULL)
 		return B_NO_MEMORY;
 
-	return B_OK;
+	return SetKey(key, keyLength);
 }
 
 
 status_t
 CryptContext::SetKey(const uint8* key, size_t keyLength)
 {
-	fAlgorithm->SetCompleteKey(*fThreadContexts, key, keyLength);
-	fMode->SetCompleteKey(*fThreadContexts, key, keyLength);
+	status_t status = fAlgorithm->SetCompleteKey(*fThreadContexts, key,
+		keyLength);
+	if (status == B_OK)
+		status = fMode->SetCompleteKey(*fThreadContexts, key, keyLength);
+
+	return status;
 }
 
 
@@ -1119,14 +1120,10 @@ VolumeCryptContext::Detect(int fd, const uint8* key, uint32 keyLength)
 	if (status < B_OK)
 		return status;
 
-	fOffset = BLOCK_SIZE;
-	fSize = size - BLOCK_SIZE;
-	fHidden = false;
-
-	if (_Detect(fd, 0, key, keyLength) == B_OK)
+	if (_Detect(fd, 0, size, key, keyLength) == B_OK)
 		return B_OK;
 
-	return _Detect(fd, size - HIDDEN_HEADER_OFFSET, key, keyLength);
+	return _Detect(fd, size - HIDDEN_HEADER_OFFSET, size, key, keyLength);
 }
 
 
@@ -1196,7 +1193,7 @@ VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 
 
 status_t
-VolumeCryptContext::_Detect(int fd, off_t offset, const uint8* key,
+VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 	uint32 keyLength)
 {
 	uint8 buffer[BLOCK_SIZE];
@@ -1210,7 +1207,7 @@ VolumeCryptContext::_Detect(int fd, off_t offset, const uint8* key,
 	uint8 diskKey[256];
 
 	derive_key(key, keyLength, salt, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
-printf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
+//printf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
 
 	status_t status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
 	if (status != B_OK)
@@ -1241,16 +1238,18 @@ printf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
 
 	// then init context with the keys from the unencrypted header
 
-	SetKey(header.master_key, sizeof(header.master_key));
+	SetKey(header.disk_key, sizeof(header.disk_key));
 
-#if 0
 	if (offset != 0) {
 		// this is a hidden drive, take over the size from the header
-		context.size = B_BENDIAN_TO_HOST_INT64(header.hidden_size);
-		context.offset = offset - context.size;
-		context.hidden = true;
+		fSize = B_BENDIAN_TO_HOST_INT64(header.hidden_size);
+		fOffset = offset - fSize;
+		fHidden = true;
+	} else {
+		fOffset = BLOCK_SIZE;
+		fSize = size - BLOCK_SIZE;
+		fHidden = false;
 	}
-#endif
 
 	return B_OK;
 }
