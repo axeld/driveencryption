@@ -543,7 +543,7 @@ status_t
 AESAlgorithm::SetKey(ThreadContext& context, const uint8* key,
 	size_t keyLength)
 {
-//printf("%s-aes key: %x\n", fMode == MODE_LRW ? "lrw" : "xts", *(int*)key);
+//dprintf("%s-aes key: %x (%lu)\n", fMode == MODE_LRW ? "lrw" : "xts", *(int*)key, keyLength);
 	if (aes_encrypt_key(key, keyLength,
 			(aes_encrypt_ctx*)context.BufferFor(fEncryptScheduler))
 				!= EXIT_SUCCESS)
@@ -597,20 +597,20 @@ AESAlgorithm::Clone(ThreadContext& context)
 void
 AESAlgorithm::Decrypt(ThreadContext& context, uint8 *data, size_t length)
 {
-//printf("  aes-decrypt-pre:  %x (%d: %x)\n", *(int*)data, fDecryptScheduler, *(int*)context.BufferFor(fDecryptScheduler));
+//dprintf("  aes-decrypt-pre:  %x (%d: %x)\n", *(int*)data, fDecryptScheduler, *(int*)context.BufferFor(fDecryptScheduler));
 	aes_decrypt(data, data,
 		(const aes_decrypt_ctx*)context.BufferFor(fDecryptScheduler));
-//printf("  aes-decrypt-post: %x\n", *(int*)data);
+//dprintf("  aes-decrypt-post: %x\n", *(int*)data);
 }
 
 
 void
 AESAlgorithm::Encrypt(ThreadContext& context, uint8 *data, size_t length)
 {
-//printf("  aes-encrypt-pre:  %x\n", *(int*)data);
+//dprintf("  aes-encrypt-pre:  %x\n", *(int*)data);
 	aes_encrypt(data, data,
 		(const aes_encrypt_ctx*)context.BufferFor(fEncryptScheduler));
-//printf("  aes-encrypt-post: %x\n", *(int*)data);
+//dprintf("  aes-encrypt-post: %x\n", *(int*)data);
 }
 
 
@@ -661,7 +661,7 @@ XTSMode::Init(ThreadContext& context, EncryptionAlgorithm* algorithm)
 status_t
 XTSMode::SetKey(ThreadContext& context, const uint8* key, size_t keyLength)
 {
-//printf("xts key: %x\n", *(int*)key);
+//dprintf("xts key: %x\n", *(int*)key);
 	return fSecondaryAlgorithm->SetKey(context, key, keyLength);
 }
 
@@ -811,7 +811,7 @@ LRWMode::Init(ThreadContext& context, EncryptionAlgorithm* algorithm)
 status_t
 LRWMode::SetKey(ThreadContext& context, const uint8* key, size_t keyLength)
 {
-//printf("lrw key: %x\n", *(int*)key);
+//dprintf("lrw key: %x\n", *(int*)key);
 	gf128_tab64_init(key,
 		(struct galois_field_context*)context.BufferFor(fGaloisField));
 
@@ -841,7 +841,7 @@ LRWMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
 	for (b = 0; b < length >> 4; b++) {
 		gf128_mul_by_tab64(i, t,
 			(galois_field_context*)context.BufferFor(fGaloisField));
-//printf("  t: %x\n", *(int*)t);
+//dprintf("  t: %x\n", *(int*)t);
 		xor128((uint64*)data, (uint64 *)t);
 
 		fAlgorithm->Decrypt(context, data, 16);
@@ -1207,7 +1207,7 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 	uint8 diskKey[256];
 
 	derive_key(key, keyLength, salt, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
-//printf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
+//dprintf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
 
 	status_t status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
 	if (status != B_OK)

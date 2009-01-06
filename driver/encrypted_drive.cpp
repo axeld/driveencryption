@@ -475,10 +475,11 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 		return -1;
 	}
 
+	position += info.context.Offset();
+
 	// read
 	status_t error = B_OK;
-	ssize_t bytesRead = read_pos(info.fd, position + info.context.Offset(),
-		buffer, *numBytes);
+	ssize_t bytesRead = read_pos(info.fd, position, buffer, *numBytes);
 	if (bytesRead < 0)
 		error = errno;
 	else
@@ -528,6 +529,8 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 	if (position + *numBytes > info.context.Size())
 		*numBytes = info.context.Size() - position;
 
+	position += info.context.Offset();
+
 	size_t bytesLeft = *numBytes;
 	status_t error = B_OK;
 	for (uint32 i = 0; bytesLeft > 0; i++) {
@@ -537,8 +540,7 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 		info.context.Encrypt(sBuffer, bytes,
 			position / info.geometry.bytes_per_sector);
 
-		ssize_t bytesWritten = write_pos(info.fd,
-			position + info.context.Offset(), sBuffer, bytes);
+		ssize_t bytesWritten = write_pos(info.fd, position, sBuffer, bytes);
 		if (bytesWritten < 0) {
 			error = errno;
 			break;
