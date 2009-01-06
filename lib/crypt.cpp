@@ -35,7 +35,6 @@ const uint32 kTrueCryptMagic = 'TRUE';
 #define BLOCKS_PER_XTS_DATA_UNIT	(BLOCK_SIZE / BYTES_PER_XTS_BLOCK)
 
 struct true_crypt_header {
-	uint8	salt[PKCS5_SALT_SIZE];
 	uint32	magic;
 	uint16	version;
 	uint16	required_program_version;
@@ -365,9 +364,11 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 
 	// decrypt header first
 
-	true_crypt_header& header = *(true_crypt_header*)buffer;
+	uint8* encryptedHeader = buffer + PKCS5_SALT_SIZE;
+	uint8* salt = buffer;
+
 	uint8 diskKey[256];
-	memcpy(context.key_salt, header.salt, PKCS5_SALT_SIZE);
+	memcpy(context.key_salt, salt, PKCS5_SALT_SIZE);
 
 	derive_key_ripemd160(key, keyLength, context.key_salt, PKCS5_SALT_SIZE,
 		RIPEMD160_ITERATIONS, diskKey, SECONDARY_KEY_SIZE + 32);
@@ -398,9 +399,12 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 		return status;
 	}
 
+	true_crypt_header header;
+	memcpy(&header, encryptedHeader, sizeof(true_crypt_header));
+
 	mode->SetKey(threadContext, diskKey + SECONDARY_KEY_SIZE, 32);
-	mode->Decrypt(threadContext, buffer + PKCS5_SALT_SIZE,
-		BLOCK_SIZE - PKCS5_SALT_SIZE);
+	mode->Decrypt(threadContext, (uint8*)&header, sizeof(true_crypt_header));
+
 	if (!valid_true_crypt_header(header)) {
 		// Try with legacy encryption mode LRW instead
 		threadContext.Reset();
@@ -414,7 +418,7 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 
 		algorithm->Init(threadContext);
 		algorithm->SetKey(threadContext, diskKey + SECONDARY_KEY_SIZE, 32);
-	
+
 		status = mode->Init(threadContext, algorithm);
 		if (status != B_OK) {
 			delete algorithm;
@@ -422,9 +426,12 @@ detect(crypt_context& context, int fd, off_t offset, const uint8* key,
 			return status;
 		}
 
-		mode->SetKey(threadContext, diskKey + SECONDARY_KEY_SIZE, 32);
-		mode->Decrypt(threadContext, buffer + PKCS5_SALT_SIZE,
-			BLOCK_SIZE - PKCS5_SALT_SIZE);
+		memcpy(&header, encryptedHeader, sizeof(true_crypt_header));
+
+		mode->SetKey(threadContext, diskKey, 32);
+		mode->Decrypt(threadContext, (uint8*)&header,
+			sizeof(true_crypt_header));
+
 		if (!valid_true_crypt_header(header)) {
 			delete algorithm;
 			delete mode;

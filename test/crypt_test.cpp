@@ -41,6 +41,10 @@ main(int argc, char** argv)
 	status_t status = detect_drive(context, fd, (uint8*)argv[2], strlen(argv[2]));
 	printf("detect: %s\n", strerror(status));
 
+	if (status == B_OK) {
+		//decrypt_block(
+	}
+
 	close(fd);
 	return 0;
 }
