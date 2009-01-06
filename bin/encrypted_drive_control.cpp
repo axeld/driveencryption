@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2007-2009, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -73,7 +73,10 @@ install_file(const char *file, bool readOnly, const uint8* key,
 			printf("Please enter a password: ");
 			fflush(stdout);
 			fgets(password, sizeof(password), stdin);
-		
+
+			if (!initialize)
+				break;
+
 			char retype[256];
 			printf("\nPlease reenter: ");
 			fflush(stdout);
