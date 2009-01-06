@@ -10,32 +10,63 @@
 
 
 #define PKCS5_SALT_SIZE		64
-#define SECONDARY_KEY_SIZE	32
+#define KEY_SIZE			32
 
 class EncryptionAlgorithm;
 class EncryptionMode;
+class ThreadContext;
 
-struct crypt_context {
-	uint8					key_salt[PKCS5_SALT_SIZE];
-	uint8					secondary_key[SECONDARY_KEY_SIZE];
-	off_t					offset;
-	off_t					size;
-	bool					hidden;
-	EncryptionAlgorithm*	algorithm;
-	EncryptionMode*			mode;
+enum encryption_algorithm {
+	ALGORITHM_AES
 };
 
+enum encryption_mode {
+	MODE_LRW,
+	MODE_XTS
+};
 
-void derive_key_ripemd160(const uint8 *key, int keyLength, const uint8 *salt,
-	int saltLength, int iterations, uint8 *diskKey, int diskKeyLength);
+class CryptContext {
+public:
+	CryptContext();
+	virtual ~CryptContext();
 
-void encrypt_buffer(crypt_context& context, uint8 *buffer, uint32 length);
-void decrypt_buffer(crypt_context& context, uint8 *buffer, uint32 length);
+	status_t Init(encryption_algorithm algorithmType,
+		encryption_mode modeType, const uint8* key, size_t keyLength);
+	status_t SetKey(const uint8* key, size_t keyLength);
 
-status_t detect_drive(crypt_context& context, int fd, const uint8* key,
-	uint32 keyLength);
-status_t setup_drive(crypt_context& context, int fd, const uint8* key,
-	uint32 keyLength, const uint8* random, uint32 randomLength);
-void init_context(crypt_context& context);
+	void Decrypt(uint8 *buffer, size_t length, uint64 blockIndex = 0);
+	void Encrypt(uint8 *buffer, size_t length, uint64 blockIndex = 0);
+
+protected:
+	void _Uninit();
+
+	EncryptionAlgorithm*	fAlgorithm;
+	EncryptionMode*			fMode;
+	ThreadContext*			fThreadContexts;
+};
+
+class VolumeCryptContext : public CryptContext {
+public:
+	VolumeCryptContext();
+	~VolumeCryptContext();
+
+	status_t Detect(int fd, const uint8* key, uint32 keyLength);
+	status_t Setup(int fd, const uint8* key, uint32 keyLength,
+		const uint8* random, uint32 randomLength);
+
+	off_t Offset() const { return fOffset; }
+	off_t Size() const { return fSize; }
+	bool IsHidden() const { return fHidden; }
+
+protected:
+	status_t _Detect(int fd, off_t offset, const uint8* key, uint32 keyLength);
+
+	off_t					fOffset;
+	off_t					fSize;
+	bool					fHidden;
+};
+
+void derive_key(const uint8 *key, size_t keyLength, const uint8 *salt,
+	size_t saltLength, uint8 *derivedKey, size_t derivedKeyLength);
 
 #endif	// CRYPT_H

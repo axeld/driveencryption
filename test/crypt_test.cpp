@@ -25,6 +25,43 @@ dprintf(const char *format,...)
 }
 
 
+extern "C" void
+dump_block(const char *buffer, int size, const char *prefix)
+{
+	const int DUMPED_BLOCK_SIZE = 16;
+	int i;
+	
+	for (i = 0; i < size;) {
+		int start = i;
+
+		dprintf(prefix);
+		for (; i < start + DUMPED_BLOCK_SIZE; i++) {
+			if (!(i % 4))
+				dprintf(" ");
+
+			if (i >= size)
+				dprintf("  ");
+			else
+				dprintf("%02x", *(unsigned char *)(buffer + i));
+		}
+		dprintf("  ");
+
+		for (i = start; i < start + DUMPED_BLOCK_SIZE; i++) {
+			if (i < size) {
+				char c = buffer[i];
+
+				if (c < 30)
+					dprintf(".");
+				else
+					dprintf("%c", c);
+			} else
+				break;
+		}
+		dprintf("\n");
+	}
+}
+
+
 int
 main(int argc, char** argv)
 {
@@ -35,14 +72,18 @@ main(int argc, char** argv)
 	if (fd < 0)
 		return 1;
 
-	crypt_context context;
-	init_context(context);
+	VolumeCryptContext context;
 
-	status_t status = detect_drive(context, fd, (uint8*)argv[2], strlen(argv[2]));
+	status_t status = context.Detect(fd, (uint8*)argv[2],
+		strlen(argv[2]));
 	printf("detect: %s\n", strerror(status));
 
 	if (status == B_OK) {
-		//decrypt_block(
+		uint8 block[512];
+		read_pos(fd, context.Offset(), block, 512);
+		context.Decrypt(block, 512, 0);
+
+		dump_block((char*)block, 512, "");
 	}
 
 	close(fd);
