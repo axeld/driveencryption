@@ -13,6 +13,7 @@
 
 #include <fcntl.h>
 #include <errno.h>
+#include <new>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,14 +59,14 @@ static struct benaphore {
 static uint8 sBuffer[65536];
 
 typedef struct device_info {
-	int32			open_count;
-	int				fd;
-	crypt_context	context;
-	bool			unused;
-	bool			registered;
-	char			file[B_PATH_NAME_LENGTH];
-	const char		*device_path;
-	device_geometry	geometry;
+	int32				open_count;
+	int					fd;
+	VolumeCryptContext	context;
+	bool				unused;
+	bool				registered;
+	char				file[B_PATH_NAME_LENGTH];
+	const char*			device_path;
+	device_geometry		geometry;
 } device_info;
 
 #define kDeviceCount		11
@@ -136,7 +137,6 @@ clear_device_info(int32 index)
 
 	device_info &info = gDeviceInfos[index];
 	info.open_count = 0;
-	init_context(info.context);
 	info.fd = -1;
 	info.unused = (index != kDeviceCount - 1);
 	info.registered = !info.unused;
@@ -171,11 +171,11 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 
 	status_t error;
 	if (initialize) {
-		error = setup_drive(info.context, fd, initInfo->key,
+		error = info.context.Setup(fd, initInfo->key,
 			initInfo->key_length, initInfo->random_data,
 			initInfo->random_length);
 	} else {
-		error = detect_drive(info.context, fd, initInfo->key,
+		error = info.context.Detect(fd, initInfo->key,
 			initInfo->key_length);
 	}
 
@@ -188,7 +188,7 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 		// Since we have only a uint32 for the cylinder count, this won't work
 		// for files > 2TB. So, we set the head count to the minimally possible
 		// value.
-		off_t blocks = info.context.size / blockSize;
+		off_t blocks = info.context.Size() / blockSize;
 		uint32 heads = (blocks + ULONG_MAX - 1) / ULONG_MAX;
 		if (heads == 0)
 			heads = 1;
@@ -276,19 +276,17 @@ encrypt_buffer(encrypted_drive_info& info)
 		|| info.buffer_length == 0)
 		return B_BAD_VALUE;
 
-	crypt_context context;
-	init_context(context);
-
-	memcpy(context.key_salt, info.random_data, PKCS5_SALT_SIZE);
-
 	uint8 diskKey[256];
-	derive_key_ripemd160(info.key, info.key_length, context.key_salt,
-		PKCS5_SALT_SIZE, 2000, diskKey, SECONDARY_KEY_SIZE + 32);
-	memcpy(context.secondary_key, diskKey, SECONDARY_KEY_SIZE);
-	gf128_tab64_init(context.secondary_key, &context.gf_context);
-	init_key(context, diskKey + SECONDARY_KEY_SIZE);
+	derive_key(info.key, info.key_length, info.random_data, PKCS5_SALT_SIZE,
+		diskKey, sizeof(diskKey));
 
-	encrypt_buffer(context, info.buffer, info.buffer_length);
+	CryptContext context;
+	status_t status = context.Init(ALGORITHM_AES, MODE_XTS,
+		diskKey, sizeof(diskKey));
+	if (status != B_OK)
+		return status;
+
+	context.Encrypt(info.buffer, info.buffer_length);
 	return B_OK;
 }
 
@@ -301,19 +299,17 @@ decrypt_buffer(encrypted_drive_info& info)
 		|| info.buffer_length == 0)
 		return B_BAD_VALUE;
 
-	crypt_context context;
-	init_context(context);
-
-	memcpy(context.key_salt, info.random_data, PKCS5_SALT_SIZE);
-
 	uint8 diskKey[256];
-	derive_key_ripemd160(info.key, info.key_length, context.key_salt,
-		PKCS5_SALT_SIZE, 2000, diskKey, SECONDARY_KEY_SIZE + 32);
-	memcpy(context.secondary_key, diskKey, SECONDARY_KEY_SIZE);
-	gf128_tab64_init(context.secondary_key, &context.gf_context);
-	init_key(context, diskKey + SECONDARY_KEY_SIZE);
+	derive_key(info.key, info.key_length, info.random_data, PKCS5_SALT_SIZE,
+		diskKey, sizeof(diskKey));
 
-	decrypt_buffer(context, info.buffer, info.buffer_length);
+	CryptContext context;
+	status_t status = context.Init(ALGORITHM_AES, MODE_XTS,
+		diskKey, sizeof(diskKey));
+	if (status != B_OK)
+		return status;
+
+	context.Decrypt(info.buffer, info.buffer_length);
 	return B_OK;
 }
 
@@ -340,8 +336,10 @@ init_driver(void)
 	sDriverLock.nesting = 0;
 
 	// init the device infos
-	for (int32 i = 0; i < kDeviceCount; i++)
+	for (int32 i = 0; i < kDeviceCount; i++) {
+		new(&gDeviceInfos[i].context) VolumeCryptContext();
 		clear_device_info(i);
+	}
 
 	return B_OK;
 }
@@ -352,6 +350,11 @@ uninit_driver(void)
 {
 	TRACE(("encrypted_drive: uninit\n"));
 	delete_sem(sDriverLock.sem);
+
+	// uninit the device infos
+	for (int32 i = 0; i < kDeviceCount; i++) {
+		gDeviceInfos[i].context.~VolumeCryptContext();
+	}
 }
 
 
@@ -459,10 +462,10 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 	device_info &info = gDeviceInfos[devIndex];
 
 	// adjust position and numBytes according to the file size
-	if (position > info.context.size)
-		position = info.context.size;
-	if (position + *numBytes > info.context.size)
-		*numBytes = info.context.size - position;
+	if (position > info.context.Size())
+		position = info.context.Size();
+	if (position + *numBytes > info.context.Size())
+		*numBytes = info.context.Size() - position;
 
 	if (position % info.geometry.bytes_per_sector != 0) {
 		// We use the block number as part of the decryption mechanism,
@@ -474,14 +477,14 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 
 	// read
 	status_t error = B_OK;
-	ssize_t bytesRead = read_pos(info.fd, position + info.context.offset,
+	ssize_t bytesRead = read_pos(info.fd, position + info.context.Offset(),
 		buffer, *numBytes);
 	if (bytesRead < 0)
 		error = errno;
 	else
 		*numBytes = bytesRead;
 
-	info.context.decrypt_block(info.context, (uint8*)buffer, bytesRead,
+	info.context.Decrypt((uint8*)buffer, bytesRead,
 		position / info.geometry.bytes_per_sector);
 
 	unlock_driver();
@@ -520,10 +523,10 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 	}
 
 	// adjust position and numBytes according to the file size
-	if (position > info.context.size)
-		position = info.context.size;
-	if (position + *numBytes > info.context.size)
-		*numBytes = info.context.size - position;
+	if (position > info.context.Size())
+		position = info.context.Size();
+	if (position + *numBytes > info.context.Size())
+		*numBytes = info.context.Size() - position;
 
 	size_t bytesLeft = *numBytes;
 	status_t error = B_OK;
@@ -531,11 +534,11 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 		size_t bytes = min_c(bytesLeft, sizeof(sBuffer));
 		memcpy(sBuffer, buffer, bytes);
 
-		info.context.encrypt_block(info.context, sBuffer, bytes,
+		info.context.Encrypt(sBuffer, bytes,
 			position / info.geometry.bytes_per_sector);
 
-		ssize_t bytesWritten = write_pos(info.fd, position + info.context.offset,
-			sBuffer, bytes);
+		ssize_t bytesWritten = write_pos(info.fd,
+			position + info.context.Offset(), sBuffer, bytes);
 		if (bytesWritten < 0) {
 			error = errno;
 			break;
@@ -694,7 +697,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 		switch (op) {
 			case B_GET_DEVICE_SIZE:
 				TRACE(("encrypted_drive: B_GET_DEVICE_SIZE\n"));
-				*(size_t*)arg = info.context.size;
+				*(size_t*)arg = info.context.Size();
 				return B_OK;
 
 			case B_SET_NONBLOCKING_IO:
@@ -798,7 +801,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 				strcpy(driveInfo->device_name, "/dev/");
 				strcat(driveInfo->device_name, info.device_path);
 				driveInfo->read_only = info.geometry.read_only;
-				driveInfo->hidden = info.context.hidden;
+				driveInfo->hidden = info.context.IsHidden();
 				return B_OK;
 			}
 
