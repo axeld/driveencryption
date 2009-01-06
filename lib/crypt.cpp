@@ -128,11 +128,17 @@ public:
 		size_t keyLength) = 0;
 	virtual status_t SetCompleteKey(ThreadContext& context, const uint8* key,
 		size_t keyLength) = 0;
+	virtual void SetBlockOffset(off_t offset) = 0;
 
-	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length,
-		uint64 blockIndex = 0) = 0;
-	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length,
-		uint64 blockIndex = 0) = 0;
+	virtual void DecryptBlock(ThreadContext& context, uint8 *data,
+		size_t length, uint64 blockIndex) = 0;
+	virtual void EncryptBlock(ThreadContext& context, uint8 *data,
+		size_t length, uint64 blockIndex) = 0;
+
+	virtual void Decrypt(ThreadContext& context, uint8 *data,
+		size_t length) = 0;
+	virtual void Encrypt(ThreadContext& context, uint8 *data,
+		size_t length) = 0;
 	
 	virtual encryption_mode Type() = 0;
 };
@@ -148,11 +154,15 @@ public:
 		size_t keyLength);
 	virtual status_t SetCompleteKey(ThreadContext& context, const uint8* key,
 		size_t keyLength);
+	virtual void SetBlockOffset(off_t offset);
  
-	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length,
-		uint64 blockIndex = 0);
-	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length,
-		uint64 blockIndex = 0);
+	virtual void DecryptBlock(ThreadContext& context, uint8 *data,
+		size_t length, uint64 blockIndex);
+	virtual void EncryptBlock(ThreadContext& context, uint8 *data,
+		size_t length, uint64 blockIndex);
+
+	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length);
+	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length);
 
 	virtual encryption_mode Type() { return MODE_XTS; }
 
@@ -172,17 +182,22 @@ public:
 		size_t keyLength);
 	virtual status_t SetCompleteKey(ThreadContext& context, const uint8* key,
 		size_t keyLength);
+	virtual void SetBlockOffset(off_t offset);
  
-	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length,
-		uint64 blockIndex = 0);
-	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length,
-		uint64 blockIndex = 0);
+	virtual void DecryptBlock(ThreadContext& context, uint8 *data,
+		size_t length, uint64 blockIndex = 0);
+	virtual void EncryptBlock(ThreadContext& context, uint8 *data,
+		size_t length, uint64 blockIndex = 0);
+
+	virtual void Decrypt(ThreadContext& context, uint8 *data, size_t length);
+	virtual void Encrypt(ThreadContext& context, uint8 *data, size_t length);
 
 	virtual encryption_mode Type() { return MODE_LRW; }
 
 protected:
 	EncryptionAlgorithm*	fAlgorithm;
 	int32					fGaloisField;
+	off_t					fOffset;
 };
 
 
@@ -675,7 +690,13 @@ XTSMode::SetCompleteKey(ThreadContext& context, const uint8* key,
 
 
 void
-XTSMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
+XTSMode::SetBlockOffset(off_t offset)
+{
+}
+
+
+void
+XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockIndex)
 {
 	uint8 finalCarry;
@@ -771,9 +792,23 @@ XTSMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
 
 
 void
-XTSMode::Encrypt(ThreadContext& context, uint8 *data, size_t length,
+XTSMode::EncryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockIndex)
 {
+}
+
+
+void
+XTSMode::Decrypt(ThreadContext& context, uint8 *data, size_t length)
+{
+	DecryptBlock(context, data, length, 0);
+}
+
+
+void
+XTSMode::Encrypt(ThreadContext& context, uint8 *data, size_t length)
+{
+	EncryptBlock(context, data, length, 0);
 }
 
 
@@ -782,7 +817,8 @@ XTSMode::Encrypt(ThreadContext& context, uint8 *data, size_t length,
 
 LRWMode::LRWMode()
 	:
-	fAlgorithm(NULL)
+	fAlgorithm(NULL),
+	fOffset(0)
 {
 }
 
@@ -828,14 +864,21 @@ LRWMode::SetCompleteKey(ThreadContext& context, const uint8* key,
 
 
 void
-LRWMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
+LRWMode::SetBlockOffset(off_t offset)
+{
+	fOffset = offset;
+}
+
+
+void
+LRWMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockIndex)
 {
 	uint8 i[8];
 	uint8 t[16];
 	int b;
 
-	blockIndex = (blockIndex << 5) + 1;
+	blockIndex = ((blockIndex - fOffset) << 5) + 1;
 	*(uint64*)i = B_HOST_TO_BENDIAN_INT64(blockIndex);
 
 	for (b = 0; b < length >> 4; b++) {
@@ -863,14 +906,14 @@ LRWMode::Decrypt(ThreadContext& context, uint8 *data, size_t length,
 
 
 void
-LRWMode::Encrypt(ThreadContext& context, uint8 *data, size_t length,
+LRWMode::EncryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockIndex)
 {
 	uint8 i[8];
 	uint8 t[16];
 	uint32 b;
 
-	blockIndex = (blockIndex << 5) + 1;
+	blockIndex = ((blockIndex - fOffset) << 5) + 1;
 	*(uint64*)i = B_HOST_TO_BENDIAN_INT64(blockIndex);
 
 	for (b = 0; b < length >> 4; b++) {
@@ -893,6 +936,20 @@ LRWMode::Encrypt(ThreadContext& context, uint8 *data, size_t length,
 	}
 
 	memset(t, 0, sizeof (t));
+}
+
+
+void
+LRWMode::Decrypt(ThreadContext& context, uint8 *data, size_t length)
+{
+	DecryptBlock(context, data, length, fOffset);
+}
+
+
+void
+LRWMode::Encrypt(ThreadContext& context, uint8 *data, size_t length)
+{
+	EncryptBlock(context, data, length, fOffset);
 }
 
 
@@ -958,16 +1015,30 @@ CryptContext::SetKey(const uint8* key, size_t keyLength)
 
 
 void
-CryptContext::Decrypt(uint8 *buffer, size_t length, uint64 blockIndex)
+CryptContext::DecryptBlock(uint8 *buffer, size_t length, uint64 blockIndex)
 {
-	fMode->Decrypt(*fThreadContexts, buffer, length, blockIndex);
+	fMode->DecryptBlock(*fThreadContexts, buffer, length, blockIndex);
 }
 
 
 void
-CryptContext::Encrypt(uint8 *buffer, size_t length, uint64 blockIndex)
+CryptContext::EncryptBlock(uint8 *buffer, size_t length, uint64 blockIndex)
 {
-	fMode->Encrypt(*fThreadContexts, buffer, length, blockIndex);
+	fMode->EncryptBlock(*fThreadContexts, buffer, length, blockIndex);
+}
+
+
+void
+CryptContext::Decrypt(uint8 *buffer, size_t length)
+{
+	fMode->Decrypt(*fThreadContexts, buffer, length);
+}
+
+
+void
+CryptContext::Encrypt(uint8 *buffer, size_t length)
+{
+	fMode->Encrypt(*fThreadContexts, buffer, length);
 }
 
 
@@ -1251,6 +1322,7 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 		fHidden = false;
 	}
 
+	fMode->SetBlockOffset(fOffset / BLOCK_SIZE);
 	return B_OK;
 }
 

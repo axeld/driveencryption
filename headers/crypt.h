@@ -34,8 +34,11 @@ public:
 		encryption_mode modeType, const uint8* key, size_t keyLength);
 	status_t SetKey(const uint8* key, size_t keyLength);
 
-	void Decrypt(uint8 *buffer, size_t length, uint64 blockIndex = 0);
-	void Encrypt(uint8 *buffer, size_t length, uint64 blockIndex = 0);
+	void DecryptBlock(uint8 *buffer, size_t length, uint64 blockIndex);
+	void EncryptBlock(uint8 *buffer, size_t length, uint64 blockIndex);
+
+	void Decrypt(uint8 *buffer, size_t length);
+	void Encrypt(uint8 *buffer, size_t length);
 
 protected:
 	void _Uninit();

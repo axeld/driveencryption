@@ -81,7 +81,7 @@ main(int argc, char** argv)
 	if (status == B_OK) {
 		uint8 block[512];
 		read_pos(fd, context.Offset(), block, 512);
-		context.Decrypt(block, 512, 1);
+		context.DecryptBlock(block, 512, 1);
 
 		dump_block((char*)block, 512, "");
 	}

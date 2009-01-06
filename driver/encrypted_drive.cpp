@@ -485,7 +485,7 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 	else
 		*numBytes = bytesRead;
 
-	info.context.Decrypt((uint8*)buffer, bytesRead,
+	info.context.DecryptBlock((uint8*)buffer, bytesRead,
 		position / info.geometry.bytes_per_sector);
 
 	unlock_driver();
@@ -537,7 +537,7 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 		size_t bytes = min_c(bytesLeft, sizeof(sBuffer));
 		memcpy(sBuffer, buffer, bytes);
 
-		info.context.Encrypt(sBuffer, bytes,
+		info.context.EncryptBlock(sBuffer, bytes,
 			position / info.geometry.bytes_per_sector);
 
 		ssize_t bytesWritten = write_pos(info.fd, position, sBuffer, bytes);
