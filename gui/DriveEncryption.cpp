@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2007-2009, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -176,7 +176,7 @@ DriveEncryption::AboutRequested()
 {
 	BAlert *alert = new BAlert("about", "DriveEncryption\n"
 		"\twritten by Axel Dörfler\n"
-		"\tCopyright 2007-2008, pinc Software.\n\n", "Ok");
+		"\tCopyright 2007-2009, pinc Software.\n\n", "Ok");
 	BTextView *view = alert->TextView();
 	BFont font;
 

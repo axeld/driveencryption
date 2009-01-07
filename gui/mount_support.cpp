@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2008, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2003-2009, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -94,8 +94,12 @@ status_t
 mount_device(const char *file, const char* mountAt)
 {
 	BString fileSystem, label;
-	if (getFileSystem(file, fileSystem, label) < B_OK)
+	if (getFileSystem(file, fileSystem, label) < B_OK) {
+#ifndef __HAIKU__
+		// We don't need to know the file system in Haiku
 		return B_BAD_VALUE;
+#endif
+	}
 
 	BString target;
 	if (mountAt != NULL && mountAt[0])
@@ -125,17 +129,16 @@ mount_device(const char *file, const char* mountAt)
 		}
 	} while (entry.Exists() && i < 42);
 
-	create_directory(name, 0755);
-
-#ifdef __HAIKU__
-	status_t status = fs_mount_volume(name, file, fileSystem.String(), 0, NULL);
+	status_t status = create_directory(name, 0755);
 	if (status != B_OK)
 		return status;
+
+#ifdef __HAIKU__
+	status = fs_mount_volume(name, file, NULL, 0, NULL);
 #else
 	if (mount(fileSystem.String(), name, file, 0, NULL, 0) < 0)
-		return errno;
+		status = errno;
 #endif
 
-	return B_OK;
+	return status;
 }
-
