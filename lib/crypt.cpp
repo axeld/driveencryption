@@ -43,8 +43,30 @@ struct true_crypt_header {
 	uint64	volume_creation_time;
 	uint64	header_creation_time;
 	uint64	hidden_size;
-	uint8	_reserved[156];
+	// v4 fields
+	uint64	volume_size;
+	uint64	encrypted_offset;
+	uint64	encrypted_size;
+
+	uint8	_reserved[132];
 	uint8	disk_key[256];
+
+	uint32 Magic() const
+		{ return B_BENDIAN_TO_HOST_INT32(magic); }
+	uint16 Version() const
+		{ return B_BENDIAN_TO_HOST_INT16(version); }
+	uint16 RequiredProgramVersion() const
+		{ return B_BENDIAN_TO_HOST_INT16(required_program_version); }
+	uint32 CrcChecksum() const
+		{ return B_BENDIAN_TO_HOST_INT32(crc_checksum); }
+	uint64 HiddenSize() const
+		{ return B_BENDIAN_TO_HOST_INT64(hidden_size); }
+	uint64 VolumeSize() const
+		{ return B_BENDIAN_TO_HOST_INT64(volume_size); }
+	uint64 EncryptedOffset() const
+		{ return B_BENDIAN_TO_HOST_INT64(encrypted_offset); }
+	uint64 EncryptedSize() const
+		{ return B_BENDIAN_TO_HOST_INT64(encrypted_size); }
 } _PACKED;
 
 
@@ -348,23 +370,27 @@ static void
 dump_true_crypt_header(true_crypt_header& header)
 {
 	dprintf("magic: %.4s\n", (char*)&header.magic);
-	dprintf("version: %x\n", B_BENDIAN_TO_HOST_INT16(header.version));
-	dprintf("required program version: %x\n", header.required_program_version);
-	dprintf("crc checksum: %lu (%lu)\n",
-		B_BENDIAN_TO_HOST_INT32(header.crc_checksum),
+	dprintf("version: %x\n", header.Version());
+	dprintf("required program version: %x\n", header.RequiredProgramVersion());
+	dprintf("crc checksum: %lu (%lu)\n", header.CrcChecksum(),
 		crc32(header.disk_key, 256));
-	dprintf("volume creation time: %Ld\n", header.volume_creation_time);
-	dprintf("header creation time: %Ld\n", header.header_creation_time);
-	dprintf("hidden size: %Ld\n", B_BENDIAN_TO_HOST_INT64(header.hidden_size));
+	dprintf("volume creation time: %lld\n", header.volume_creation_time);
+	dprintf("header creation time: %lld\n", header.header_creation_time);
+	dprintf("hidden size: %lld\n", header.HiddenSize());
+
+	if (header.Version() >= 4) {
+		dprintf("volume size: %lld\n", header.VolumeSize());
+		dprintf("encrypted offset: %lld\n", header.EncryptedOffset());
+		dprintf("encrypted size: %lld\n", header.EncryptedSize());
+	}
 }
 
 
 static bool
 valid_true_crypt_header(true_crypt_header& header)
 {
-	return header.magic == B_HOST_TO_BENDIAN_INT32(kTrueCryptMagic)
-		&& B_BENDIAN_TO_HOST_INT32(header.crc_checksum)
-				== crc32(header.disk_key, 256);
+	return header.Magic() == kTrueCryptMagic
+		&& header.CrcChecksum() == crc32(header.disk_key, 256);
 }
 
 
@@ -1295,6 +1321,10 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 		fOffset = BLOCK_SIZE;
 		fSize = size - BLOCK_SIZE;
 		fHidden = false;
+	}
+	if (header.Version() >= 4) {
+		fOffset = header.EncryptedOffset();
+		fSize = header.EncryptedSize();
 	}
 
 	fMode->SetBlockOffset(fOffset / BLOCK_SIZE);
