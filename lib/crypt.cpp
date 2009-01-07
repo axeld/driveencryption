@@ -699,13 +699,13 @@ void
 XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockIndex)
 {
-	uint8 finalCarry;
 	uint8 whiteningValue[BYTES_PER_XTS_BLOCK];
 	uint8 byteBufUnitNo[BYTES_PER_XTS_BLOCK];
 	uint64* bufPtr = (uint64*)data;
-	uint32 startBlock = 0;//blockIndex;
+	uint32 startBlock = 0;
 	uint32 endBlock, block;
 	uint64 blockCount, dataUnitNo;
+	uint8 finalCarry;
 
 	// Convert the 64-bit data unit number into a little-endian 16-byte array. 
 	dataUnitNo = blockIndex;
@@ -743,7 +743,7 @@ XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 				// Actual decryption
 				fAlgorithm->Decrypt(context, (uint8*)bufPtr,
 					BYTES_PER_XTS_BLOCK);
- 
+
 				// Pre-whitening
 				*bufPtr++ ^= *whiteningValuePtr64++;
 				*bufPtr++ ^= *whiteningValuePtr64;
@@ -755,7 +755,8 @@ XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 
 #if BYTE_ORDER == LITTLE_ENDIAN
 			// Little-endian platforms
-			finalCarry = (*whiteningValuePtr64 & 0x8000000000000000ULL) ? 135 : 0;
+			finalCarry = (*whiteningValuePtr64 & 0x8000000000000000ULL)
+				? 135 : 0;
 
 			*whiteningValuePtr64-- <<= 1;
 
@@ -767,7 +768,8 @@ XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 			// Big-endian platforms
 			finalCarry = (*whiteningValuePtr64 & 0x80) ? 135 : 0;
 
-			*whiteningValuePtr64 = LE64(LE64(*whiteningValuePtr64) << 1);
+			*whiteningValuePtr64 = B_HOST_TO_LENDIAN_INT64(
+				B_HOST_TO_LENDIAN_INT64(*whiteningValuePtr64) << 1);
 
 			whiteningValuePtr64--;
 
@@ -795,6 +797,97 @@ void
 XTSMode::EncryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockIndex)
 {
+	uint8 whiteningValue[BYTES_PER_XTS_BLOCK];
+	uint8 byteBufUnitNo[BYTES_PER_XTS_BLOCK];
+	uint64* bufPtr = (uint64*)data;
+	uint32 startBlock = 0;
+	uint32 endBlock, block;
+	uint64 blockCount, dataUnitNo;
+	uint8 finalCarry;
+
+	// Convert the 64-bit data unit number into a little-endian 16-byte array. 
+	dataUnitNo = blockIndex;
+	*((uint64*)byteBufUnitNo) = B_HOST_TO_LENDIAN_INT64(dataUnitNo);
+	*((uint64*)byteBufUnitNo + 1) = 0;
+
+	//ASSERT((length % BYTES_PER_XTS_BLOCK) == 0);
+
+	blockCount = length / BYTES_PER_XTS_BLOCK;
+
+	// Process all blocks in the buffer
+	while (blockCount > 0) {
+		if (blockCount < BLOCKS_PER_XTS_DATA_UNIT)
+			endBlock = startBlock + (uint32)blockCount;
+		else
+			endBlock = BLOCKS_PER_XTS_DATA_UNIT;
+
+		uint64* whiteningValuePtr64 = (uint64*)whiteningValue;
+
+		// Encrypt the data unit number using the secondary key (in order to
+		// generate the first whitening value for this data unit)
+		*whiteningValuePtr64 = *((uint64*)byteBufUnitNo);
+		*(whiteningValuePtr64 + 1) = 0;
+		fSecondaryAlgorithm->Encrypt(context, (uint8*)whiteningValue,
+			BYTES_PER_XTS_BLOCK);
+
+		// Generate (and apply) subsequent whitening values for blocks in this
+		// data unit and encrypt all relevant blocks in this data unit
+		for (block = 0; block < endBlock; block++) {
+			if (block >= startBlock) {
+				// Pre-whitening
+				*bufPtr++ ^= *whiteningValuePtr64++;
+				*bufPtr-- ^= *whiteningValuePtr64--;
+
+				// Actual encryption
+				fAlgorithm->Encrypt(context, (uint8*)bufPtr,
+					BYTES_PER_XTS_BLOCK);
+
+				// Post-whitening
+				*bufPtr++ ^= *whiteningValuePtr64++;
+				*bufPtr++ ^= *whiteningValuePtr64;
+			}
+			else
+				whiteningValuePtr64++;
+
+			// Derive the next whitening value
+
+#if BYTE_ORDER == LITTLE_ENDIAN
+			// Little-endian platforms
+			finalCarry = (*whiteningValuePtr64 & 0x8000000000000000ULL)
+				? 135 : 0;
+
+			*whiteningValuePtr64-- <<= 1;
+
+			if (*whiteningValuePtr64 & 0x8000000000000000ULL)
+				*(whiteningValuePtr64 + 1) |= 1;	
+
+			*whiteningValuePtr64 <<= 1;
+#else
+			// Big-endian platforms
+			finalCarry = (*whiteningValuePtr64 & 0x80) ? 135 : 0;
+
+			*whiteningValuePtr64 = B_HOST_TO_LENDIAN_INT64(
+				B_HOST_TO_LENDIAN_INT64(*whiteningValuePtr64) << 1);
+
+			whiteningValuePtr64--;
+
+			if (*whiteningValuePtr64 & 0x80)
+				*(whiteningValuePtr64 + 1) |= 0x0100000000000000ULL;
+
+			*whiteningValuePtr64 = B_HOST_TO_LENDIAN_INT64(
+				B_HOST_TO_LENDIAN_INT64(*whiteningValuePtr64) << 1);
+#endif
+
+			whiteningValue[0] ^= finalCarry;
+		}
+
+		blockCount -= endBlock - startBlock;
+		startBlock = 0;
+		dataUnitNo++;
+		*((uint64*)byteBufUnitNo) = B_HOST_TO_LENDIAN_INT64(dataUnitNo);
+	}
+
+	memset(whiteningValue, 0, sizeof(whiteningValue));
 }
 
 
@@ -1053,124 +1146,6 @@ CryptContext::_Uninit()
 	fMode = NULL;
 	fThreadContexts = NULL;
 }
-
-
-#if 0
-void
-encrypt_block_xts(crypt_context& context, uint8 *data, uint32 length,
-	uint64 blockIndex)
-{
-	// TODO: implement!
-#if 0
-	uint8 finalCarry;
-	uint8 whiteningValue [BYTES_PER_XTS_BLOCK];
-	uint8 byteBufUnitNo [BYTES_PER_XTS_BLOCK];
-	uint64 *whiteningValuePtr64 = (uint64 *) whiteningValue;
-	uint64 *bufPtr = (uint64*)data;
-	unsigned int startBlock = startCipherBlockNo, endBlock, block;
-	uint64 blockCount, dataUnitNo;
-
-	/* The encrypted data unit number (i.e. the resultant ciphertext block) is to be multiplied in the
-	finite field GF(2^128) by j-th power of n, where j is the sequential plaintext/ciphertext block
-	number and n is 2, a primitive element of GF(2^128). This can be (and is) simplified and implemented
-	as a left shift of the preceding whitening value by one bit (with carry propagating). In addition, if
-	the shift of the highest byte results in a carry, 135 is XORed into the lowest byte. The value 135 is
-	derived from the modulus of the Galois Field (x^128+x^7+x^2+x+1). */
-
-	// Convert the 64-bit data unit number into a little-endian 16-byte array. 
-	// Note that as we are converting a 64-bit number into a 16-byte array we can always zero the last 8 bytes.
-	dataUnitNo = startDataUnitNo;
-	*((uint64 *) byteBufUnitNo) = Endian::Little (dataUnitNo);
-	*((uint64 *) byteBufUnitNo + 1) = 0;
-
-	if (length % BYTES_PER_XTS_BLOCK)
-		TC_THROW_FATAL_EXCEPTION;
-
-	blockCount = length / BYTES_PER_XTS_BLOCK;
-
-	// Process all blocks in the buffer
-	while (blockCount > 0)
-	{
-		if (blockCount < BLOCKS_PER_XTS_DATA_UNIT)
-			endBlock = startBlock + (unsigned int) blockCount;
-		else
-			endBlock = BLOCKS_PER_XTS_DATA_UNIT;
-
-		whiteningValuePtr64 = (uint64 *) whiteningValue;
-
-		// Encrypt the data unit number using the secondary key (in order to generate the first 
-		// whitening value for this data unit)
-		*whiteningValuePtr64 = *((uint64 *) byteBufUnitNo);
-		*(whiteningValuePtr64 + 1) = 0;
-		secondaryCipher.EncryptBlock (whiteningValue);
-
-		// Generate (and apply) subsequent whitening values for blocks in this data unit and
-		// encrypt all relevant blocks in this data unit
-		for (block = 0; block < endBlock; block++)
-		{
-			if (block >= startBlock)
-			{
-				// Pre-whitening
-				*bufPtr++ ^= *whiteningValuePtr64++;
-				*bufPtr-- ^= *whiteningValuePtr64--;
-
-				// Actual encryption
-				cipher.EncryptBlock (reinterpret_cast <uint8 *> (bufPtr));
-
-				// Post-whitening
-				*bufPtr++ ^= *whiteningValuePtr64++;
-				*bufPtr++ ^= *whiteningValuePtr64;
-			}
-			else
-				whiteningValuePtr64++;
-
-			// Derive the next whitening value
-
-#if BYTE_ORDER == LITTLE_ENDIAN
-
-			// Little-endian platforms
-
-			finalCarry = 
-				(*whiteningValuePtr64 & 0x8000000000000000ULL) ?
-				135 : 0;
-
-			*whiteningValuePtr64-- <<= 1;
-
-			if (*whiteningValuePtr64 & 0x8000000000000000ULL)
-				*(whiteningValuePtr64 + 1) |= 1;	
-
-			*whiteningValuePtr64 <<= 1;
-#else
-
-			// Big-endian platforms
-
-			finalCarry = 
-				(*whiteningValuePtr64 & 0x80) ?
-				135 : 0;
-
-			*whiteningValuePtr64 = Endian::Little (Endian::Little (*whiteningValuePtr64) << 1);
-
-			whiteningValuePtr64--;
-
-			if (*whiteningValuePtr64 & 0x80)
-				*(whiteningValuePtr64 + 1) |= 0x0100000000000000ULL;	
-
-			*whiteningValuePtr64 = Endian::Little (Endian::Little (*whiteningValuePtr64) << 1);
-#endif
-
-			whiteningValue[0] ^= finalCarry;
-		}
-
-		blockCount -= endBlock - startBlock;
-		startBlock = 0;
-		dataUnitNo++;
-		*((uint64 *) byteBufUnitNo) = Endian::Little (dataUnitNo);
-	}
-
-	FAST_ERASE64 (whiteningValue, sizeof (whiteningValue));
-#endif
-}
-#endif
 
 
 VolumeCryptContext::VolumeCryptContext()
