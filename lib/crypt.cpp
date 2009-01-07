@@ -1203,64 +1203,55 @@ status_t
 VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 	const uint8* random, uint32 randomLength)
 {
-	return B_ERROR;
-#if 0
 	off_t size;
 	status_t status = get_size(fd, size);
 	if (status < B_OK)
 		return status;
 
-	context.offset = BLOCK_SIZE;
-	context.size = size - BLOCK_SIZE;
-	context.hidden = false;
+	fOffset = BLOCK_SIZE;
+	fSize = size - BLOCK_SIZE;
+	fHidden = false;
 
-	memcpy(context.key_salt, random, PKCS5_SALT_SIZE);
+	const uint8* salt = random;
 	random += PKCS5_SALT_SIZE;
 
-	true_crypt_header header;
-	memcpy(header.salt, context.key_salt, PKCS5_SALT_SIZE);
+	uint8 buffer[BLOCK_SIZE];
+	memcpy(buffer, salt, PKCS5_SALT_SIZE);
+	memset(buffer + PKCS5_SALT_SIZE, 0, BLOCK_SIZE - PKCS5_SALT_SIZE);
+
+	true_crypt_header& header = *(true_crypt_header*)&buffer[PKCS5_SALT_SIZE];
 	header.magic = B_HOST_TO_BENDIAN_INT32(kTrueCryptMagic);
-	header.version = B_HOST_TO_BENDIAN_INT16(0x1000);
-	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x1000);
+	header.version = B_HOST_TO_BENDIAN_INT16(0x2);
+	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x410);
 	header.volume_creation_time
 		= B_HOST_TO_BENDIAN_INT64(real_time_clock_usecs());
 	header.header_creation_time
 		= B_HOST_TO_BENDIAN_INT64(real_time_clock_usecs());
-	header.hidden_size = 0;
-	memset(header._reserved, 0, sizeof(header._reserved));
-	memcpy(header.secondary_key, random, SECONDARY_KEY_SIZE);
-	random += SECONDARY_KEY_SIZE;
-	memcpy(header.master_key, random, sizeof(header.master_key));
-	random += sizeof(header.master_key);
-	header.crc_checksum = crc32(header.secondary_key, 256);
+	memcpy(header.disk_key, random, sizeof(header.disk_key));
+	random += sizeof(header.disk_key);
+	header.crc_checksum = B_HOST_TO_BENDIAN_INT32(crc32(header.disk_key, 256));
 
 	// use key + salt to encrypt the header, and write it to disk
 
-	uint8 diskKey[256];
-	derive_key_ripemd160(key, keyLength, context.key_salt, PKCS5_SALT_SIZE,
-		RIPEMD160_ITERATIONS, diskKey, SECONDARY_KEY_SIZE + 32);
-	memcpy(context.secondary_key, diskKey, SECONDARY_KEY_SIZE);
-	gf128_tab64_init(context.secondary_key, &context.gf_context);
-	init_key(context, diskKey + SECONDARY_KEY_SIZE);
+	uint8 diskKey[DISK_KEY_SIZE];
+	derive_key(key, keyLength, salt, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
 
-	encrypt_buffer(context, (uint8*)&header.magic,
-		BLOCK_SIZE - PKCS5_SALT_SIZE);
+	status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
+	if (status != B_OK)
+		return status;
 
-	ssize_t bytesWritten = write_pos(fd, 0, &header, BLOCK_SIZE);
+	Encrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
+
+	ssize_t bytesWritten = write_pos(fd, 0, buffer, BLOCK_SIZE);
 	if (bytesWritten < 0)
 		return errno;
 
 	// use the decrypted header to init the volume encryption
 
-	decrypt_buffer(context, (uint8*)&header.magic,
-		BLOCK_SIZE - PKCS5_SALT_SIZE);
-
-	init_key(context, header.master_key);
-	memcpy(context.secondary_key, header.secondary_key, SECONDARY_KEY_SIZE);
-	gf128_tab64_init(context.secondary_key, &context.gf_context);
+	Decrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
+	SetKey(header.disk_key, sizeof(header.disk_key));
 
 	return B_OK;
-#endif
 }
 
 
@@ -1276,7 +1267,7 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 
 	uint8* encryptedHeader = buffer + PKCS5_SALT_SIZE;
 	uint8* salt = buffer;
-	uint8 diskKey[256];
+	uint8 diskKey[DISK_KEY_SIZE];
 
 	derive_key(key, keyLength, salt, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
 //dprintf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
