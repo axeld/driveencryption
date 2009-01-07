@@ -166,6 +166,16 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 
 	// open the file
 	int fd = open(initInfo->file_name, mode);
+	if (fd < 0 && !readOnly) {
+		// try again with read-only
+		initInfo->read_only = true;
+		readOnly = true;
+		mode = O_RDONLY;
+#ifdef __HAIKU__
+		mode |= O_NOCACHE;
+#endif
+		fd = open(initInfo->file_name, mode);
+	}
 	if (fd < 0)
 		return errno;
 
