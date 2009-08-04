@@ -1,5 +1,5 @@
 /*
- * Copyright 2007, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ * Copyright 2007-2009, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -12,6 +12,8 @@
 #include <MessageRunner.h>
 #include <StringView.h>
 #include <TextControl.h>
+
+#include <string.h>
 
 
 const uint32 kMsgOldEntered = 'onte';

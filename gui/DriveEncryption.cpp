@@ -13,6 +13,8 @@
 #include <Path.h>
 #include <TextView.h>
 
+#include <string.h>
+
 #include "DriveWindow.h"
 #include "encrypted_drive.h"
 
