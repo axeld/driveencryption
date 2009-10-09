@@ -245,7 +245,7 @@ CheckBoxColumn::MouseDown(BColumnListView *parent, BRow *row, BField* _field,
 {
 	if (row != parent->FocusRow())
 		return;
-	
+
 	fieldRect = _Box(parent, fieldRect);
 	if (!fieldRect.Contains(point))
 		return;
@@ -821,11 +821,44 @@ DriveWindow::_CollectDevices(BMenu *menu, uint32 what, BEntry *startEntry)
 		if (entry.GetPath(&path) != B_OK)
 			continue;
 
+		off_t size = 0;
+		int device = open(path.Path(), O_RDONLY);
+		if (device >= 0) {
+			device_geometry geometry;
+			if (ioctl(device, B_GET_GEOMETRY, &geometry) == 0) {
+				size = 1LL * geometry.head_count * geometry.cylinder_count
+					* geometry.sectors_per_track * geometry.bytes_per_sector;
+			}
+
+			close(device);
+		}
+
 		BMessage *message = new BMessage(what);
 		message->AddRef("refs", &ref);
 		message->AddBool("is device", true);
 
-		BMenuItem* item = new BMenuItem(path.Path(), message);
+		BString label = path.Path();
+		if (size != 0) {
+			char string[64];
+			if (size < 1024)
+				sprintf(string, "%Ld bytes", size);
+			else {
+				char *units[] = {"KB", "MB", "GB", "TB", NULL};
+				double value = size;
+				int32 i = -1;
+
+				do {
+					value /= 1024.0;
+					i++;
+				} while (value >= 1024 && units[i + 1]);
+
+				sprintf(string, "%.1f %s", value, units[i]);
+			}
+
+			label << " (" << string << ")";
+		}
+
+		BMenuItem* item = new BMenuItem(label.String(), message);
 		if (_IsMounted(path))
 			item->SetEnabled(false);
 
@@ -1009,7 +1042,7 @@ DriveWindow::_CreateFile(BMessage* message)
 	message = new BMessage(kMsgNewFilePassword);
 	message->AddRef("ref", &ref);
 	message->AddBool("confirm", false);
-	PostMessage(message);	
+	PostMessage(message);
 }
 
 
