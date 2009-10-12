@@ -584,7 +584,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 			case B_SET_NONBLOCKING_IO:
 			case B_SET_BLOCKING_IO:
 			case B_GET_READ_STATUS:
-			case B_GET_WRITE_STATUS:		
+			case B_GET_WRITE_STATUS:
 			case B_GET_ICON:
 			case B_GET_GEOMETRY:
 			case B_GET_BIOS_GEOMETRY:
@@ -725,7 +725,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 				*(bool*)arg = true;
 				return B_OK;
 
-			case B_GET_WRITE_STATUS:		
+			case B_GET_WRITE_STATUS:
 				TRACE(("encrypted_drive: B_GET_WRITE_STATUS\n"));
 				*(bool*)arg = true;
 				return B_OK;
@@ -788,6 +788,12 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 				bool wasRegistered = info.registered;
 
 				info.registered = false;
+
+				if (info.open_count == 0) {
+					// The device is not used anymore, we can uninitialize
+					// it now
+					uninit_device_info(devIndex);
+				}
 
 				// on the last unregistration we need to close the
 				// control device
