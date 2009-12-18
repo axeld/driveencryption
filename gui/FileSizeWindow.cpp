@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2007-2009, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -144,7 +144,7 @@ FileSizeWindow::_ParseSize(const char* string)
 {
 	char* end;
 	double size = strtod(string, &end);
-	off_t bytes = off_t(size * 10.0);
+	off_t bytes = off_t(size);
 	if (size == 0.0) {
 		// for hex numbers
 		bytes = strtoll(string, &end, 0);
@@ -159,6 +159,9 @@ FileSizeWindow::_ParseSize(const char* string)
 	}
 
 	switch (end[0]) {
+		case 'K':
+		case 'k':
+			return off_t(size * 1024);
 		case 'M':
 		case 'm':
 			return off_t(size * kMegaByte);
@@ -180,7 +183,7 @@ FileSizeWindow::MessageReceived(BMessage* message)
 	switch (message->what) {
 		case kMsgEntered:
 		{
-			size_t size = _ParseSize(fSizeControl->Text());
+			off_t size = _ParseSize(fSizeControl->Text());
 			if (size == 0) {
 				fSizeControl->TextView()->SelectAll();
 				fSizeControl->MakeFocus(true);
@@ -241,7 +244,7 @@ void
 FileSizeWindow::DispatchMessage(BMessage* message, BHandler* target)
 {
 	if (message->what == B_KEY_DOWN) {
-		const char *string;
+		const char* string;
 		if (message->FindString("bytes", &string) == B_OK
 			&& string[0] == B_ESCAPE) {
 			PostMessage(B_QUIT_REQUESTED);
