@@ -51,16 +51,16 @@ getFileSystem(const char *path, BString &fileSystem, BString &label)
 	}
 
 	/*** check for NTFS ***/
-	
+
 	if (!strncmp(block + 3, "NTFS", 4) && isBootBlock((uint8 *)block)) {
 		fileSystem = "ntfs";
 		label = "NTFS volume";
 
 		return B_OK;
 	}
-	
+
 	/*** check for FAT32 ***/
-	
+
 	if (strncmp(block + 3, "HPFS", 4) && isBootBlock((uint8 *)block)
 		&& block[0x10] > 0 && block[0x10] < 8) {
 		fileSystem = "dos";
@@ -75,7 +75,7 @@ getFileSystem(const char *path, BString &fileSystem, BString &label)
 	do {
 		if (strncmp(block + 1, "CD001", 5) == 0) {
 			fileSystem = "iso9660";
-			
+
 			int32 index = 40 + 31;
 			while (block[index] == ' ')
 				block[index--] = '\0';
@@ -119,7 +119,7 @@ mount_device(const char *file, const char* mountAt)
 		if (i++ == 0)
 			sprintf(name, "%s", target.String());
 		else
-			sprintf(name, "%s_%ld", label.String(), i);
+			sprintf(name, "%s_%ld", target.String(), i);
 
 		entry.SetTo(name);
 		if (entry.Exists() && entry.IsDirectory()) {
