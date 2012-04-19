@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2008-2012, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  *
  * The XTS/LRW modes and the RIPE160 code is distributed under the
@@ -8,6 +8,13 @@
 
 
 #include "crypt.h"
+
+#include "aes.h"
+#include "crc32.h"
+#include "gf_mul.h"
+#include "ripemd160.h"
+
+#include "Worker.h"
 
 #include <ByteOrder.h>
 #include <Drivers.h>
@@ -20,15 +27,9 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "aes.h"
-#include "crc32.h"
-#include "gf_mul.h"
-#include "ripemd160.h"
-
 
 const uint32 kTrueCryptMagic = 'TRUE';
 
-#define BLOCK_SIZE					512
 #define DISK_KEY_SIZE				64
 #define HIDDEN_HEADER_OFFSET		1536
 #define RIPEMD160_ITERATIONS		2000
@@ -124,7 +125,7 @@ public:
 		size_t keyLength);
 
 	virtual EncryptionAlgorithm* Clone(ThreadContext& context);
- 
+
 	virtual void Decrypt(ThreadContext& context, uint8 *data,
 		size_t length);
 	virtual void Encrypt(ThreadContext& context, uint8 *data,
@@ -161,7 +162,7 @@ public:
 		size_t length) = 0;
 	virtual void Encrypt(ThreadContext& context, uint8 *data,
 		size_t length) = 0;
-	
+
 	virtual encryption_mode Type() = 0;
 };
 
@@ -177,7 +178,7 @@ public:
 	virtual status_t SetCompleteKey(ThreadContext& context, const uint8* key,
 		size_t keyLength);
 	virtual void SetBlockOffset(off_t offset);
- 
+
 	virtual void DecryptBlock(ThreadContext& context, uint8 *data,
 		size_t length, uint64 blockIndex);
 	virtual void EncryptBlock(ThreadContext& context, uint8 *data,
@@ -205,7 +206,7 @@ public:
 	virtual status_t SetCompleteKey(ThreadContext& context, const uint8* key,
 		size_t keyLength);
 	virtual void SetBlockOffset(off_t offset);
- 
+
 	virtual void DecryptBlock(ThreadContext& context, uint8 *data,
 		size_t length, uint64 blockIndex = 0);
 	virtual void EncryptBlock(ThreadContext& context, uint8 *data,
@@ -221,6 +222,67 @@ protected:
 	int32					fGaloisField;
 	off_t					fOffset;
 };
+
+
+class CryptJob : public Job {
+public:
+	CryptJob()
+		:
+		fTask(NULL),
+		fThreadContext(NULL)
+	{
+	}
+
+	void SetTo(CryptTask* task, ThreadContext* context, uint8* data,
+		size_t length, uint64 blockIndex)
+	{
+		fTask = task;
+		fThreadContext = context;
+		fData = data;
+		fLength = length;
+		fBlockIndex = blockIndex;
+	}
+
+	void Done();
+
+protected:
+	CryptTask*		fTask;
+	ThreadContext*	fThreadContext;
+	uint8*			fData;
+	size_t			fLength;
+	uint64			fBlockIndex;
+};
+
+class DecryptJob : public CryptJob {
+public:
+	DecryptJob()
+	{
+	}
+
+	virtual void Do()
+	{
+		fTask->Mode()->DecryptBlock(*fThreadContext, fData, fLength,
+			fBlockIndex);
+		Done();
+	}
+};
+
+class EncryptJob : public CryptJob {
+public:
+	EncryptJob()
+	{
+	}
+
+	virtual void Do()
+	{
+		fTask->Mode()->EncryptBlock(*fThreadContext, fData, fLength,
+			fBlockIndex);
+		Done();
+	}
+};
+
+
+static int32 sThreadCount;
 
 
 //	#pragma mark - RIPEMD160 key computation
@@ -551,6 +613,17 @@ ThreadContext::_CapacityFor(size_t size)
 }
 
 
+//	#pragma mark - CryptJob
+
+
+void
+CryptJob::Done()
+{
+	fTask->Put(fThreadContext);
+	delete this;
+}
+
+
 //	#pragma mark - Encryption algorithms
 
 
@@ -733,7 +806,7 @@ XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockCount, dataUnitNo;
 	uint8 finalCarry;
 
-	// Convert the 64-bit data unit number into a little-endian 16-byte array. 
+	// Convert the 64-bit data unit number into a little-endian 16-byte array.
 	dataUnitNo = blockIndex;
 	*((uint64*)byteBufUnitNo) = B_HOST_TO_LENDIAN_INT64(dataUnitNo);
 	*((uint64*)byteBufUnitNo + 1) = 0;
@@ -787,7 +860,7 @@ XTSMode::DecryptBlock(ThreadContext& context, uint8 *data, size_t length,
 			*whiteningValuePtr64-- <<= 1;
 
 			if (*whiteningValuePtr64 & 0x8000000000000000ULL)
-				*(whiteningValuePtr64 + 1) |= 1;	
+				*(whiteningValuePtr64 + 1) |= 1;
 
 			*whiteningValuePtr64 <<= 1;
 #else
@@ -831,7 +904,7 @@ XTSMode::EncryptBlock(ThreadContext& context, uint8 *data, size_t length,
 	uint64 blockCount, dataUnitNo;
 	uint8 finalCarry;
 
-	// Convert the 64-bit data unit number into a little-endian 16-byte array. 
+	// Convert the 64-bit data unit number into a little-endian 16-byte array.
 	dataUnitNo = blockIndex;
 	*((uint64*)byteBufUnitNo) = B_HOST_TO_LENDIAN_INT64(dataUnitNo);
 	*((uint64*)byteBufUnitNo + 1) = 0;
@@ -885,7 +958,7 @@ XTSMode::EncryptBlock(ThreadContext& context, uint8 *data, size_t length,
 			*whiteningValuePtr64-- <<= 1;
 
 			if (*whiteningValuePtr64 & 0x8000000000000000ULL)
-				*(whiteningValuePtr64 + 1) |= 1;	
+				*(whiteningValuePtr64 + 1) |= 1;
 
 			*whiteningValuePtr64 <<= 1;
 #else
@@ -1133,6 +1206,13 @@ CryptContext::SetKey(const uint8* key, size_t keyLength)
 }
 
 
+int32
+CryptContext::CountThreadContexts() const
+{
+	return sThreadCount;
+}
+
+
 void
 CryptContext::DecryptBlock(uint8 *buffer, size_t length, uint64 blockIndex)
 {
@@ -1172,6 +1252,9 @@ CryptContext::_Uninit()
 	fMode = NULL;
 	fThreadContexts = NULL;
 }
+
+
+// #pragma mark -
 
 
 VolumeCryptContext::VolumeCryptContext()
@@ -1323,7 +1406,113 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 }
 
 
+//	#pragma mark - CryptTask
+
+
+CryptTask::CryptTask(CryptContext& context, uint8* data, size_t length,
+	uint64 blockIndex)
+	:
+	fContext(context),
+	fData(data),
+	fLength(length),
+	fBlockIndex(blockIndex),
+	fUsedThreadContexts(0)
+{
+	fJobLength = fLength / sThreadCount;
+	if (fJobLength < BLOCK_SIZE)
+		fJobLength = BLOCK_SIZE;
+}
+
+
+Job*
+CryptTask::NextJob()
+{
+	if (IsDone())
+		return NULL;
+
+	CryptJob* job = CreateJob();
+	_PrepareJob(job);
+	return job;
+}
+
+
+void
+CryptTask::Put(ThreadContext* threadContext)
+{
+	size_t count = fContext.CountThreadContexts();
+	for (int32 i = 0; i < count; i++) {
+		if (&fContext.ThreadContexts()[i] == threadContext) {
+			atomic_and(&fUsedThreadContexts, ~(1L << i));
+			break;
+		}
+	}
+}
+
+
+void
+CryptTask::_PrepareJob(CryptJob* job)
+{
+	job->SetTo(this, _Get(), fData, fJobLength, fBlockIndex);
+	fData += fJobLength;
+	fLength -= fJobLength;
+	fBlockIndex += fJobLength / BLOCK_SIZE;
+}
+
+
+ThreadContext*
+CryptTask::_Get()
+{
+	size_t count = fContext.CountThreadContexts();
+	for (int32 i = 0; i < count; i++) {
+		int32 bit = 1L << i;
+		if ((fUsedThreadContexts & bit) == 0) {
+			fUsedThreadContexts |= bit;
+			return &fContext.ThreadContexts()[i];
+		}
+	}
+
+	return NULL;
+}
+
+
+//	#pragma mark - DecryptTask
+
+
+CryptJob*
+DecryptTask::CreateJob()
+{
+	return new DecryptJob();
+}
+
+
+//	#pragma mark - EncryptTask
+
+
+CryptJob*
+EncryptTask::CreateJob()
+{
+	return new EncryptJob();
+}
+
+
 //	#pragma mark -
+
+
+void
+init_crypt()
+{
+	system_info info;
+	if (get_system_info(&info) == B_OK)
+		sThreadCount = info.cpu_count;
+	if (sThreadCount == 0)
+		sThreadCount = 1;
+}
+
+
+void
+uninit_crypt()
+{
+}
 
 
 void
