@@ -49,7 +49,7 @@ LoginWindow::LoginWindow(BMessage& settings)
 	AddChild(top);
 
 	rect = top->Bounds().InsetByCopy(10, 10);
-	
+
 	BString text = "Welcome, ";
 	const char* login = getlogin();
 	if (login == NULL || !login[0])
@@ -268,6 +268,8 @@ LoginWindow::_MountAll()
 		for (int32 i = 0; drives.FindString("file", i, &file) == B_OK; i++) {
 			bool autoMount = drives.FindBool("auto mount");
 			const char* mountAt = drives.FindString("mount at");
+			if (!strcmp(mountAt, "-"))
+				mountAt = NULL;
 
 			if (autoMount)
 				_MountEncrypted(file, mountAt);
