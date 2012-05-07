@@ -7,7 +7,7 @@
 ## Application Specific Settings ---------------------------------------------
 
 # specify the name of the binary
-NAME= libcrypt.a
+NAME= libcrypt
 
 # specify the type of binary
 #	APP:	Application
