@@ -1,0 +1,7 @@
+bin/encrypted_drive_control
+driver/encrypted_drive
+gui/DriveEncryption
+lib/libcrypt.a
+login/Login
+test/crypt_test
+*/objects.*
