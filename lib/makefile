@@ -25,7 +25,7 @@ TYPE= STATIC
 #	are included from different directories.  Also note that spaces
 #	in folder names do not work well with this makefile.
 SRCS= crypt.cpp ripemd160.c gf_mul.c aescrypt.c \
-	aeskey.c aestab.c crc32.c Worker.cpp
+	aeskey.c aestab.c crc32.c Worker.cpp random.cpp
 
 #	specify the resource files to use
 #	full path or a relative path to the resource file can be used.
