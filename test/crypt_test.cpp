@@ -1,10 +1,12 @@
 /*
- * Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
 
 #include "crypt.h"
+
+#include "random.h"
 
 #include <fcntl.h>
 #include <stdlib.h>
@@ -30,7 +32,7 @@ dump_block(const char *buffer, int size, const char *prefix)
 {
 	const int DUMPED_BLOCK_SIZE = 16;
 	int i;
-	
+
 	for (i = 0; i < size;) {
 		int start = i;
 
@@ -68,15 +70,39 @@ main(int argc, char** argv)
 	if (argc < 3)
 		return 1;
 
-	int fd = open(argv[1], O_RDONLY);
+	bool initialize = argc > 3 && !strcmp(argv[3], "init");
+
+	int fd = open(argv[1], initialize ? O_RDWR : O_RDONLY);
 	if (fd < 0)
 		return 1;
 
-	VolumeCryptContext context;
+	uint8* key = (uint8*)argv[2];
+	size_t keyLength = strlen(argv[2]);
 
-	status_t status = context.Detect(fd, (uint8*)argv[2],
-		strlen(argv[2]));
-	printf("detect: %s\n", strerror(status));
+	VolumeCryptContext context;
+	status_t status;
+
+	if (initialize) {
+		// generate random data to be used as salt and AES keys
+		uint8 random[2048];
+		fill_random_buffer(random, sizeof(random));
+
+		status = context.Setup(fd, key, keyLength, random, sizeof(random));
+		printf("setup: %s\n", strerror(status));
+
+		if (status == B_OK) {
+			// write test data
+			uint8 block[512];
+			for (int i = 0; i < sizeof(block); i++)
+				block[i] = i % 256;
+
+			context.EncryptBlock(block, 512, context.Offset() / 512);
+			write_pos(fd, context.Offset(), block, 512);
+		}
+	} else {
+		status = context.Detect(fd, key, keyLength);
+		printf("detect: %s, offset %lld\n", strerror(status), context.Offset());
+	}
 
 	if (status == B_OK) {
 		uint8 block[512];

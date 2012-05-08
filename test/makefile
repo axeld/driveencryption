@@ -28,14 +28,14 @@ SRCS= crypt_test.cpp
 
 #	specify the resource files to use
 #	full path or a relative path to the resource file can be used.
-RSRCS= 
+RSRCS=
 
 #	specify additional libraries to link against
 #	there are two acceptable forms of library specifications
 #	-	if your library follows the naming pattern of:
 #		libXXX.so or libXXX.a you can simply specify XXX
 #		library: libbe.so entry: be
-#		
+#
 #	- 	if your library does not follow the standard library
 #		naming scheme you need to specify the path to the library
 #		and it's name
@@ -48,37 +48,44 @@ LIBS= ../lib/libcrypt.a
 #	be recursive, so include all of the paths where libraries can
 #	be found.  Directories where source files are found are
 #	automatically included.
-LIBPATHS= 
+LIBPATHS=
 
 #	additional paths to look for system headers
 #	thes use the form: #include <header>
 #	source file directories are NOT auto-included here
-SYSTEM_INCLUDE_PATHS = .
+HAIKU_SOURCE = /boot/home/develop/haiku/haiku
+SYSTEM_INCLUDE_PATHS = $(HAIKU_SOURCE)/headers/private/kernel \
+	$(HAIKU_SOURCE)/private/kernel/arch \
+	$(HAIKU_SOURCE)/headers/private/kernel/arch/x86 \
+	$(HAIKU_SOURCE)/headers/private/system \
+	$(HAIKU_SOURCE)/headers/private/shared \
+	$(HAIKU_SOURCE)/headers/private \
+	$(HAIKU_SOURCE)/build/config_headers/
 
 #	additional paths to look for local headers
 #	thes use the form: #include "header"
 #	source file directories are automatically included
-LOCAL_INCLUDE_PATHS = ../headers/
+LOCAL_INCLUDE_PATHS = ../headers/ ../bin/
 
 #	specify the level of optimization that you desire
 #	NONE, SOME, FULL
-OPTIMIZE= 
+OPTIMIZE=
 
 #	specify any preprocessor symbols to be defined.  The symbols
 #	will be set to a value of 1.  For example specify DEBUG if you want
 #	DEBUG=1 to be set when compiling.
-DEFINES= 
+DEFINES=
 
 #	specify special warning levels
 #	if unspecified default warnings will be used
 #	NONE = supress all warnings
 #	ALL = enable all warnings
-WARNINGS = 
+WARNINGS =
 
 #	specify whether image symbols will be created
 #	so that stack crawls in the debugger are meaningful
 #	if TRUE symbols will be created
-SYMBOLS = 
+SYMBOLS =
 
 #	specify debug settings
 #	if TRUE will allow application to be run from
