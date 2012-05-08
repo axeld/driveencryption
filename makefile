@@ -5,7 +5,22 @@ default install:
 	@cd bin; make -f makefile $@
 	@cd gui; make -f makefile $@
 	@cd login; make -f makefile $@
+	@cd test; make -f makefile $@
 
+lib:
+	@cd lib; make -f makefile
+driver:
+	@cd driver; make -f makefile
+bin:
+	@cd bin; make -f makefile
+gui:
+	@cd gui; make -f makefile
+login:
+	@cd login; make -f makefile
+test:
+	@cd test; make -f makefile
+
+.PHONY : lib driver bin gui login test
 
 # Sets some attributes on the "Read Me" and install-encryption.sh files
 # from SVN properties.
