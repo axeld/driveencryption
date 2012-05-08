@@ -37,10 +37,6 @@ public:
 		encryption_mode modeType, const uint8* key, size_t keyLength);
 	status_t SetKey(const uint8* key, size_t keyLength);
 
-	ThreadContext* ThreadContexts() const { return fThreadContexts; }
-	int32 CountThreadContexts() const;
-	EncryptionMode* Mode() const { return fMode; }
-
 	void DecryptBlock(uint8 *buffer, size_t length, uint64 blockIndex);
 	void EncryptBlock(uint8 *buffer, size_t length, uint64 blockIndex);
 
@@ -50,9 +46,12 @@ public:
 protected:
 	void _Uninit();
 
+protected:
+	friend class CryptTask;
+
 	EncryptionAlgorithm*	fAlgorithm;
 	EncryptionMode*			fMode;
-	ThreadContext*			fThreadContexts;
+	ThreadContext**			fThreadContexts;
 };
 
 class VolumeCryptContext : public CryptContext {
@@ -85,14 +84,13 @@ public:
 		uint64 blockIndex);
 	virtual ~CryptTask() {}
 
-	virtual Job* NextJob();
-
-	EncryptionMode* Mode() { return fContext.Mode(); }
+	EncryptionMode* Mode() { return fContext.fMode; }
 	bool IsDone() const { return fLength == 0; }
 
 	void Put(ThreadContext* threadContext);
 
 protected:
+	virtual Job* CreateNextJob();
 	virtual CryptJob* CreateJob() = 0;
 
 private:

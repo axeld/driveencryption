@@ -24,10 +24,22 @@ public:
 
 class Task : public DoublyLinkedListLinkImpl<Task> {
 public:
-								Task() {}
-	virtual						~Task() {}
+								Task();
+	virtual						~Task();
 
-	virtual	Job*				NextJob() = 0;
+			Job*				NextJob();
+
+			void				JobDone(Job* job);
+			void				Wait();
+
+protected:
+	virtual	Job*				CreateNextJob() = 0;
+
+private:
+			mutex				fLock;
+			ConditionVariable	fFinishCondition;
+			vint32				fPending;
+			bool				fFinished;
 };
 
 typedef DoublyLinkedList<Task> TaskList;
@@ -42,7 +54,7 @@ public:
 			int32				CountThreads() const { return fThreadCount; }
 
 			void				AddTask(Task& task);
-			void				Wait();
+			void				WaitFor(Task& task);
 
 private:
 	static	status_t			_Worker(void* self);

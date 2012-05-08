@@ -22,11 +22,19 @@
 
 #include <errno.h>
 #include <new>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
+
+//#define TRACE_CRYPT
+#ifdef TRACE_CRYPT
+#	define TRACE(...)	dprintf(__VA_ARGS__)
+#else
+#	define TRACE(...)	;
+#endif
 
 const uint32 kTrueCryptMagic = 'TRUE';
 
@@ -270,6 +278,9 @@ public:
 
 	virtual void Do()
 	{
+		TRACE("  %d: decrypt %p, %" B_PRIuSIZE ", index %" B_PRIu64
+			", context %p\n", find_thread(NULL), fData, fLength, fBlockIndex,
+			fThreadContext);
 		fTask->Mode()->DecryptBlock(*fThreadContext, fData, fLength,
 			fBlockIndex);
 		Done();
@@ -284,6 +295,9 @@ public:
 
 	virtual void Do()
 	{
+		TRACE("  %d: encrypt %p, %" B_PRIuSIZE ", index %" B_PRIu64
+			", context %p\n", find_thread(NULL), fData, fLength, fBlockIndex,
+			fThreadContext);
 		fTask->Mode()->EncryptBlock(*fThreadContext, fData, fLength,
 			fBlockIndex);
 		Done();
@@ -1178,6 +1192,13 @@ CryptContext::CryptContext()
 
 CryptContext::~CryptContext()
 {
+	if (fThreadContexts != NULL) {
+		for (int32 i = 0; i < sThreadCount; i++) {
+			delete fThreadContexts[i];
+		}
+
+		delete[] fThreadContexts;
+	}
 }
 
 
@@ -1205,9 +1226,14 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 	if (status != B_OK)
 		return status;
 
-	fThreadContexts = new(std::nothrow) ThreadContext(threadContext);
+	fThreadContexts = new(std::nothrow) ThreadContext*[sThreadCount];
 	if (fThreadContexts == NULL)
 		return B_NO_MEMORY;
+
+dprintf("********************** COUNT: %ld\n", sThreadCount);
+	for (int32 i = 0; i < sThreadCount; i++) {
+		fThreadContexts[i] = new ThreadContext(threadContext);
+	}
 
 	return SetKey(key, keyLength);
 }
@@ -1216,47 +1242,40 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 status_t
 CryptContext::SetKey(const uint8* key, size_t keyLength)
 {
-	status_t status = fAlgorithm->SetCompleteKey(*fThreadContexts, key,
+	status_t status = fAlgorithm->SetCompleteKey(*fThreadContexts[0], key,
 		keyLength);
 	if (status == B_OK)
-		status = fMode->SetCompleteKey(*fThreadContexts, key, keyLength);
+		status = fMode->SetCompleteKey(*fThreadContexts[0], key, keyLength);
 
 	return status;
-}
-
-
-int32
-CryptContext::CountThreadContexts() const
-{
-	return sThreadCount;
 }
 
 
 void
 CryptContext::DecryptBlock(uint8 *buffer, size_t length, uint64 blockIndex)
 {
-	fMode->DecryptBlock(*fThreadContexts, buffer, length, blockIndex);
+	fMode->DecryptBlock(*(fThreadContexts[0]), buffer, length, blockIndex);
 }
 
 
 void
 CryptContext::EncryptBlock(uint8 *buffer, size_t length, uint64 blockIndex)
 {
-	fMode->EncryptBlock(*fThreadContexts, buffer, length, blockIndex);
+	fMode->EncryptBlock(*(fThreadContexts[0]), buffer, length, blockIndex);
 }
 
 
 void
 CryptContext::Decrypt(uint8 *buffer, size_t length)
 {
-	fMode->Decrypt(*fThreadContexts, buffer, length);
+	fMode->Decrypt(*(fThreadContexts[0]), buffer, length);
 }
 
 
 void
 CryptContext::Encrypt(uint8 *buffer, size_t length)
 {
-	fMode->Encrypt(*fThreadContexts, buffer, length);
+	fMode->Encrypt(*(fThreadContexts[0]), buffer, length);
 }
 
 
@@ -1452,7 +1471,7 @@ CryptTask::CryptTask(CryptContext& context, uint8* data, size_t length,
 
 
 Job*
-CryptTask::NextJob()
+CryptTask::CreateNextJob()
 {
 	if (IsDone())
 		return NULL;
@@ -1466,9 +1485,8 @@ CryptTask::NextJob()
 void
 CryptTask::Put(ThreadContext* threadContext)
 {
-	size_t count = fContext.CountThreadContexts();
-	for (int32 i = 0; i < count; i++) {
-		if (&fContext.ThreadContexts()[i] == threadContext) {
+	for (int32 i = 0; i < sThreadCount; i++) {
+		if (fContext.fThreadContexts[i] == threadContext) {
 			atomic_and(&fUsedThreadContexts, ~(1L << i));
 			break;
 		}
@@ -1479,9 +1497,10 @@ CryptTask::Put(ThreadContext* threadContext)
 void
 CryptTask::_PrepareJob(CryptJob* job)
 {
-	job->SetTo(this, _Get(), fData, fJobLength, fBlockIndex);
-	fData += fJobLength;
-	fLength -= fJobLength;
+	size_t bytes = min_c(fJobLength, fLength);
+	job->SetTo(this, _Get(), fData, bytes, fBlockIndex);
+	fData += bytes;
+	fLength -= bytes;
 	fBlockIndex += fJobLength / BLOCK_SIZE;
 }
 
@@ -1489,12 +1508,11 @@ CryptTask::_PrepareJob(CryptJob* job)
 ThreadContext*
 CryptTask::_Get()
 {
-	size_t count = fContext.CountThreadContexts();
-	for (int32 i = 0; i < count; i++) {
+	for (int32 i = 0; i < sThreadCount; i++) {
 		int32 bit = 1L << i;
 		if ((fUsedThreadContexts & bit) == 0) {
 			fUsedThreadContexts |= bit;
-			return &fContext.ThreadContexts()[i];
+			return fContext.fThreadContexts[i];
 		}
 	}
 

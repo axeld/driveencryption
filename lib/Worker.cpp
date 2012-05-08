@@ -11,12 +11,74 @@
 #include <new>
 
 
+Task::Task()
+	:
+	fFinished(false),
+	fPending(0)
+{
+	mutex_init(&fLock, "task");
+	fFinishCondition.Init(this, "task finished");
+}
+
+
+Task::~Task()
+{
+	mutex_destroy(&fLock);
+}
+
+
+Job*
+Task::NextJob()
+{
+	Job* job = CreateNextJob();
+
+	MutexLocker locker(fLock);
+	if (job == NULL) {
+		fFinished = true;
+		if (fPending == 0)
+			fFinishCondition.NotifyOne();
+	} else
+		fPending++;
+
+	return job;
+}
+
+
+void
+Task::JobDone(Job* job)
+{
+	MutexLocker locker(fLock);
+
+	if (--fPending == 0 && fFinished)
+		fFinishCondition.NotifyOne();
+}
+
+
+void
+Task::Wait()
+{
+	MutexLocker locker(fLock);
+
+	if (!fFinished || fPending) {
+		ConditionVariableEntry entry;
+		fFinishCondition.Add(&entry);
+		locker.Unlock();
+
+		entry.Wait();
+	}
+}
+
+
+// #pragma mark -
+
+
 Worker::Worker()
 	:
 	fThreads(NULL),
 	fThreadCount(0)
 {
 	mutex_init(&fLock, "worker");
+	MutexLocker t(fLock);
 	fCondition.Init(this, "work wait");
 
 	system_info info;
@@ -29,7 +91,16 @@ Worker::Worker()
 
 Worker::~Worker()
 {
-	delete[] fThreads;
+	fCondition.NotifyAll(false, B_ERROR);
+	mutex_destroy(&fLock);
+
+	if (fThreads != NULL) {
+		for (int32 i = 0; i < fThreadCount; i++) {
+			wait_for_thread(fThreads[i], NULL);
+		}
+
+		delete[] fThreads;
+	}
 }
 
 
@@ -62,9 +133,10 @@ Worker::AddTask(Task& task)
 
 
 void
-Worker::Wait()
+Worker::WaitFor(Task& task)
 {
-	_Worker();
+	_Work();
+	task.Wait();
 }
 
 
@@ -81,13 +153,17 @@ Worker::_Worker()
 {
 	while (true) {
 		MutexLocker locker(fLock);
-		ConditionVariableEntry entry;
-		fCondition.Add(&entry);
-		locker.Unlock();
 
-		status_t status = entry.Wait();
-		if (status != B_OK)
-			break;
+		if (fTasks.IsEmpty()) {
+			ConditionVariableEntry entry;
+			fCondition.Add(&entry);
+			locker.Unlock();
+
+			status_t status = entry.Wait();
+			if (status != B_OK)
+				break;
+		} else
+			locker.Unlock();
 
 		_Work();
 	}
@@ -97,22 +173,22 @@ Worker::_Worker()
 void
 Worker::_Work()
 {
-	MutexLocker locker(fLock);
+	while (true) {
+		MutexLocker locker(fLock);
 
-	Task* task = fTasks.First();
-	if (task == NULL)
-		return;
+		Task* task = fTasks.First();
+		if (task == NULL)
+			return;
 
-	Job* job = task->NextJob();
-	if (job == NULL) {
-		fTasks.Remove(task);
+		Job* job = task->NextJob();
+		if (job == NULL) {
+			fTasks.Remove(task);
+			return;
+		}
+
 		locker.Unlock();
 
-		delete task;
-		return;
+		job->Do();
+		task->JobDone(job);
 	}
-
-	locker.Unlock();
-
-	job->Do();
 }
