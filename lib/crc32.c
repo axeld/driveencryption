@@ -47,8 +47,9 @@ static const uint32 kCRC32Tab[] = {
 	0xb3667a2e, 0xc4614ab8, 0x5d681b02, 0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
 };
 
+
 uint32
-crc32(uint8 *data, int32 length)
+crc32(const uint8* data, int32 length)
 {
 	uint32 crc = 0xffffffff;
 
@@ -58,4 +59,3 @@ crc32(uint8 *data, int32 length)
 
 	return crc ^ 0xffffffff;
 }
-

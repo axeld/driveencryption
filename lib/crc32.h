@@ -14,6 +14,4 @@
 #ifdef __cplusplus
 extern "C"
 #endif
-uint32 crc32(uint8 *data, int32 length);
-//unsigned __int32 crc32int (unsigned __int32 *data);
-//BOOL crc32_selftests (void);
+uint32 crc32(const uint8* data, int32 length);
