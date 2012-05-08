@@ -41,15 +41,18 @@ struct true_crypt_header {
 	uint16	version;
 	uint16	required_program_version;
 	uint32	crc_checksum;
-	uint64	volume_creation_time;
-	uint64	header_creation_time;
+	uint8	_reserved1[16];
 	uint64	hidden_size;
 	// v4 fields
 	uint64	volume_size;
 	uint64	encrypted_offset;
 	uint64	encrypted_size;
+	uint32	flags;
+	// v5
+	uint32	block_size;
 
-	uint8	_reserved[132];
+	uint8	_reserved2[120];
+	uint32	header_crc_checksum;
 	uint8	disk_key[256];
 
 	uint32 Magic() const
@@ -60,6 +63,8 @@ struct true_crypt_header {
 		{ return B_BENDIAN_TO_HOST_INT16(required_program_version); }
 	uint32 CrcChecksum() const
 		{ return B_BENDIAN_TO_HOST_INT32(crc_checksum); }
+	uint32 HeaderCrcChecksum() const
+		{ return B_BENDIAN_TO_HOST_INT32(header_crc_checksum); }
 	uint64 HiddenSize() const
 		{ return B_BENDIAN_TO_HOST_INT64(hidden_size); }
 	uint64 VolumeSize() const
@@ -68,6 +73,10 @@ struct true_crypt_header {
 		{ return B_BENDIAN_TO_HOST_INT64(encrypted_offset); }
 	uint64 EncryptedSize() const
 		{ return B_BENDIAN_TO_HOST_INT64(encrypted_size); }
+	uint32 Flags() const
+		{ return B_BENDIAN_TO_HOST_INT32(flags); }
+	uint32 BlockSize() const
+		{ return B_BENDIAN_TO_HOST_INT32(block_size); }
 } _PACKED;
 
 
@@ -436,23 +445,33 @@ dump_true_crypt_header(true_crypt_header& header)
 	dprintf("required program version: %x\n", header.RequiredProgramVersion());
 	dprintf("crc checksum: %lu (%lu)\n", header.CrcChecksum(),
 		crc32(header.disk_key, 256));
-	dprintf("volume creation time: %lld\n", header.volume_creation_time);
-	dprintf("header creation time: %lld\n", header.header_creation_time);
 	dprintf("hidden size: %lld\n", header.HiddenSize());
 
 	if (header.Version() >= 4) {
 		dprintf("volume size: %lld\n", header.VolumeSize());
 		dprintf("encrypted offset: %lld\n", header.EncryptedOffset());
 		dprintf("encrypted size: %lld\n", header.EncryptedSize());
+		dprintf("flags: %lx\n", header.Flags());
+		dprintf("header crc checksum: %lx\n", header.HeaderCrcChecksum());
 	}
+	if (header.Version() >= 5)
+		dprintf("block size: %lx\n", header.BlockSize());
 }
 
 
 static bool
 valid_true_crypt_header(true_crypt_header& header)
 {
-	return header.Magic() == kTrueCryptMagic
-		&& header.CrcChecksum() == crc32(header.disk_key, 256);
+	if (header.Magic() != kTrueCryptMagic)
+		return false;
+	if (header.CrcChecksum() != crc32(header.disk_key, 256))
+		return false;
+
+	if (header.Version() >= 0x4
+		&& header.HeaderCrcChecksum() != crc32((uint8*)&header, 188))
+		return false;
+
+	return true;
 }
 
 
@@ -1291,8 +1310,8 @@ VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 	if (status < B_OK)
 		return status;
 
-	fOffset = BLOCK_SIZE;
-	fSize = size - BLOCK_SIZE;
+	fOffset = max_c(4096, BLOCK_SIZE);
+	fSize = size - fOffset;
 	fHidden = false;
 
 	const uint8* salt = random;
@@ -1304,15 +1323,17 @@ VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 
 	true_crypt_header& header = *(true_crypt_header*)&buffer[PKCS5_SALT_SIZE];
 	header.magic = B_HOST_TO_BENDIAN_INT32(kTrueCryptMagic);
-	header.version = B_HOST_TO_BENDIAN_INT16(0x2);
-	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x410);
-	header.volume_creation_time
-		= B_HOST_TO_BENDIAN_INT64(real_time_clock_usecs());
-	header.header_creation_time
-		= B_HOST_TO_BENDIAN_INT64(real_time_clock_usecs());
+	header.version = B_HOST_TO_BENDIAN_INT16(0x4);
+	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x600);
+	header.volume_size = B_HOST_TO_BENDIAN_INT64(fOffset + fSize);
+	header.encrypted_offset = B_HOST_TO_BENDIAN_INT64(fOffset);
+	header.encrypted_size = B_HOST_TO_BENDIAN_INT64(fSize);
+	header.flags = 0;
 	memcpy(header.disk_key, random, sizeof(header.disk_key));
 	random += sizeof(header.disk_key);
 	header.crc_checksum = B_HOST_TO_BENDIAN_INT32(crc32(header.disk_key, 256));
+	header.header_crc_checksum
+		= B_HOST_TO_BENDIAN_INT32(crc32((uint8*)&header, 188));
 
 	// use key + salt to encrypt the header, and write it to disk
 
@@ -1365,6 +1386,8 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 	Decrypt((uint8*)&header, sizeof(true_crypt_header));
 
 	if (!valid_true_crypt_header(header)) {
+		dump_true_crypt_header(header);
+
 		// Try with legacy encryption mode LRW instead
 		status = Init(ALGORITHM_AES, MODE_LRW, diskKey, DISK_KEY_SIZE);
 		if (status != B_OK)
@@ -1380,7 +1403,11 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 		}
 	}
 
-	dump_true_crypt_header(header);
+	if (header.RequiredProgramVersion() >= 0x700) {
+		// TODO: test if the block size is really not 512 bytes
+		dprintf("header version not yet supported!\n");
+		return B_NOT_SUPPORTED;
+	}
 
 	// then init context with the keys from the unencrypted header
 
