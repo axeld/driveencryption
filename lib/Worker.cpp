@@ -57,9 +57,12 @@ Task::JobDone(Job* job)
 void
 Task::Wait()
 {
-	MutexLocker locker(fLock);
+	while (true) {
+		MutexLocker locker(fLock);
 
-	if (!fFinished || fPending) {
+		if (fFinished && !fPending)
+			return;
+
 		ConditionVariableEntry entry;
 		fFinishCondition.Add(&entry);
 		locker.Unlock();

@@ -94,8 +94,8 @@ public:
 	ThreadContext(const ThreadContext& context);
 	~ThreadContext();
 
-	int32 AddBuffer(size_t size);
-	void* BufferFor(int32 index);
+	ssize_t AddBuffer(size_t size);
+	void* BufferFor(int32 offset);
 	void Reset();
 
 	ThreadContext& operator=(const ThreadContext& other);
@@ -565,7 +565,7 @@ ThreadContext::~ThreadContext()
 }
 
 
-int32
+ssize_t
 ThreadContext::AddBuffer(size_t size)
 {
 	if (size == 0)
@@ -595,9 +595,9 @@ ThreadContext::AddBuffer(size_t size)
 
 
 void*
-ThreadContext::BufferFor(int32 index)
+ThreadContext::BufferFor(int32 offset)
 {
-	return (void*)((uint8*)fBuffer + index);
+	return (void*)((uint8*)fBuffer + offset);
 }
 
 
@@ -1230,7 +1230,6 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 	if (fThreadContexts == NULL)
 		return B_NO_MEMORY;
 
-dprintf("********************** COUNT: %ld\n", sThreadCount);
 	for (int32 i = 0; i < sThreadCount; i++) {
 		fThreadContexts[i] = new ThreadContext(threadContext);
 	}
@@ -1242,12 +1241,17 @@ dprintf("********************** COUNT: %ld\n", sThreadCount);
 status_t
 CryptContext::SetKey(const uint8* key, size_t keyLength)
 {
-	status_t status = fAlgorithm->SetCompleteKey(*fThreadContexts[0], key,
-		keyLength);
-	if (status == B_OK)
-		status = fMode->SetCompleteKey(*fThreadContexts[0], key, keyLength);
+	for (int32 i = 0; i < sThreadCount; i++) {
+		status_t status = fAlgorithm->SetCompleteKey(*fThreadContexts[i], key,
+			keyLength);
+		if (status == B_OK)
+			status = fMode->SetCompleteKey(*fThreadContexts[i], key, keyLength);
 
-	return status;
+		if (status != B_OK)
+			return status;
+	}
+
+	return B_OK;
 }
 
 

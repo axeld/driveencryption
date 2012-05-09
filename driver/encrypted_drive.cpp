@@ -56,7 +56,6 @@ static struct benaphore {
 	thread_id	owner;
 	int32		nesting;
 } sDriverLock;
-static uint8 sBuffer[65536];
 
 typedef struct device_info {
 	int32				open_count;
@@ -69,6 +68,11 @@ typedef struct device_info {
 	device_geometry		geometry;
 } device_info;
 
+struct open_cookie {
+	int32				device_index;
+	uint8				buffer[65536];
+};
+
 #define kDeviceCount		11
 #define kDataDeviceCount	(kDeviceCount - 1)
 #define kControlDevice		(kDeviceCount - 1)
@@ -77,6 +81,7 @@ struct device_info gDeviceInfos[kDeviceCount];
 
 static int32 gRegistrationCount = 0;
 static int gControlDeviceFD = -1;
+static Worker sWorker;
 
 
 static void
@@ -135,7 +140,7 @@ clear_device_info(int32 index)
 {
 	TRACE(("encrypted_drive: clear_device_info(%ld)\n", index));
 
-	device_info &info = gDeviceInfos[index];
+	device_info& info = gDeviceInfos[index];
 	info.open_count = 0;
 	info.fd = -1;
 	info.unused = (index != kDeviceCount - 1);
@@ -345,6 +350,10 @@ init_driver(void)
 	sDriverLock.owner = -1;
 	sDriverLock.nesting = 0;
 
+	new(&sWorker) Worker();
+	sWorker.Init();
+	init_crypt();
+
 	// init the device infos
 	for (int32 i = 0; i < kDeviceCount; i++) {
 		new(&gDeviceInfos[i].context) VolumeCryptContext();
@@ -365,6 +374,9 @@ uninit_driver(void)
 	for (int32 i = 0; i < kDeviceCount; i++) {
 		gDeviceInfos[i].context.~VolumeCryptContext();
 	}
+
+	uninit_crypt();
+	sWorker.~Worker();
 }
 
 
@@ -388,63 +400,71 @@ find_device(const char* name)
 
 
 static status_t
-encrypted_drive_open(const char *name, uint32 flags, void **cookie)
+encrypted_drive_open(const char* name, uint32 flags, void** _cookie)
 {
-	TRACE(("encrypted_drive: open %s\n",name));
-
-	*cookie = (void *)-1;
+	TRACE(("encrypted_drive: open %s\n", name));
 
 	lock_driver();
 
-	int32 devIndex = dev_index_for_path(name);
+	int32 deviceIndex = dev_index_for_path(name);
+	status_t status = B_OK;
+	open_cookie* cookie;
 
-	TRACE(("encrypted_drive: devIndex %ld!\n", devIndex));
+	TRACE(("encrypted_drive: deviceIndex %ld!\n", deviceIndex));
 
-	if (!is_valid_device_index(devIndex)) {
+	if (!is_valid_device_index(deviceIndex)) {
 		TRACE(("encrypted_drive: wrong index!\n"));
-		unlock_driver();
-		return B_ERROR;
+		status = B_BAD_VALUE;
+		goto out;
 	}
 
-	if (gDeviceInfos[devIndex].unused) {
+	if (gDeviceInfos[deviceIndex].unused) {
 		TRACE(("encrypted_drive: device is unused!\n"));
-		unlock_driver();
-		return B_ERROR;
+		status = B_NO_INIT;
+		goto out;
 	}
 
-	if (!gDeviceInfos[devIndex].registered) {
+	if (!gDeviceInfos[deviceIndex].registered) {
 		TRACE(("encrypted_drive: device has been unregistered!\n"));
-		unlock_driver();
-		return B_ERROR;
+		status = B_NOT_ALLOWED;
+		goto out;
 	}
 
-	// store index in cookie
-	*cookie = (void *)devIndex;
+	cookie = new(std::nothrow) open_cookie();
+	if (cookie == NULL) {
+		status = B_NO_MEMORY;
+		goto out;
+	}
 
-	if (devIndex != kControlDevice)
-		gDeviceInfos[devIndex].open_count++;
+	cookie->device_index = deviceIndex;
+	*_cookie = cookie;
 
+	if (deviceIndex != kControlDevice)
+		gDeviceInfos[deviceIndex].open_count++;
+
+out:
 	unlock_driver();
-	return B_OK;
+	return status;
 }
 
 
 static status_t
-encrypted_drive_close(void *cookie)
+encrypted_drive_close(void* _cookie)
 {
-	int32 devIndex = (int)cookie;
+	open_cookie* cookie = (open_cookie*)_cookie;
+	int32 deviceIndex = cookie->device_index;
 
-	TRACE(("encrypted_drive: close() devIndex = %ld\n", devIndex));
-	if (!is_valid_data_device_index(devIndex))
+	TRACE(("encrypted_drive: close() deviceIndex = %ld\n", deviceIndex));
+	if (!is_valid_data_device_index(deviceIndex))
 		return B_OK;
 
 	lock_driver();
 
-	gDeviceInfos[devIndex].open_count--;
-	if (gDeviceInfos[devIndex].open_count == 0
-		&& !gDeviceInfos[devIndex].registered) {
+	gDeviceInfos[deviceIndex].open_count--;
+	if (gDeviceInfos[deviceIndex].open_count == 0
+		&& !gDeviceInfos[deviceIndex].registered) {
 		// The last FD is closed and the device has been unregistered. Free its info.
-		uninit_device_info(devIndex);
+		uninit_device_info(deviceIndex);
 	}
 
 	unlock_driver();
@@ -454,22 +474,33 @@ encrypted_drive_close(void *cookie)
 
 
 static status_t
-encrypted_drive_read(void *cookie, off_t position, void *buffer,
-	size_t *numBytes)
+encrypted_drive_free(void* _cookie)
 {
-	TRACE(("encrypted_drive: read pos = 0x%08Lx, bytes = 0x%08lx\n", position, *numBytes));
+	TRACE(("encrypted_drive: free cookie()\n"));
+	delete (open_cookie*)_cookie;
+	return B_OK;
+}
+
+
+static status_t
+encrypted_drive_read(void* _cookie, off_t position, void* buffer,
+	size_t* numBytes)
+{
+	TRACE(("encrypted_drive: read pos = 0x%08Lx, bytes = 0x%08lx\n", position,
+		*numBytes));
 
 	// check parameters
-	int devIndex = (int)cookie;
-	if (devIndex == kControlDevice) {
+	open_cookie* cookie = (open_cookie*)_cookie;
+	int32 deviceIndex = cookie->device_index;
+	if (deviceIndex == kControlDevice) {
 		TRACE(("encrypted_drive: reading from control device not allowed\n"));
 		return B_NOT_ALLOWED;
 	}
 	if (position < 0)
 		return B_BAD_VALUE;
 
+	device_info& info = gDeviceInfos[deviceIndex];
 	lock_driver();
-	device_info &info = gDeviceInfos[devIndex];
 
 	// adjust position and numBytes according to the file size
 	if (position > info.context.Size())
@@ -482,21 +513,43 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 		// so we have to make sure any access is block aligned.
 		dprintf("TODO read partial!\n");
 		unlock_driver();
-		return -1;
+		return B_NOT_SUPPORTED;
 	}
 
 	position += info.context.Offset();
 
-	// read
 	status_t error = B_OK;
-	ssize_t bytesRead = read_pos(info.fd, position, buffer, *numBytes);
-	if (bytesRead < 0)
-		error = errno;
-	else
-		*numBytes = bytesRead;
+	size_t bytesLeft = *numBytes;
+	while (bytesLeft > 0) {
+		size_t bytes = min_c(bytesLeft, sizeof(cookie->buffer));
 
-	info.context.DecryptBlock((uint8*)buffer, bytesRead,
-		position / info.geometry.bytes_per_sector);
+		ssize_t bytesRead = read_pos(info.fd, position, cookie->buffer,
+			bytes);
+		if (bytesRead < 0) {
+			error = errno;
+			break;
+		}
+
+		DecryptTask task(info.context, cookie->buffer, bytesRead,
+			position / BLOCK_SIZE);
+		TRACE(("decrypt %d: %p, %" B_PRIuSIZE ", index %" B_PRIu64 "\n",
+				find_thread(NULL), cookie->buffer, bytesRead,
+				position / BLOCK_SIZE));
+		sWorker.AddTask(task);
+		sWorker.WaitFor(task);
+
+		if (user_memcpy(buffer, cookie->buffer, bytesRead) != B_OK) {
+			error = B_BAD_ADDRESS;
+			break;
+		}
+
+		buffer = (void*)((uint8*)buffer + bytesRead);
+		bytesLeft -= bytesRead;
+		position += bytesRead;
+	}
+
+	if (bytesLeft > 0)
+		*numBytes -= bytesLeft;
 
 	unlock_driver();
 	return error;
@@ -504,22 +557,23 @@ encrypted_drive_read(void *cookie, off_t position, void *buffer,
 
 
 static status_t
-encrypted_drive_write(void *cookie, off_t position, const void *buffer,
-	size_t *numBytes)
+encrypted_drive_write(void* _cookie, off_t position, const void* buffer,
+	size_t* numBytes)
 {
 	TRACE(("encrypted_drive: write pos = 0x%08Lx, bytes = 0x%08lx\n", position, *numBytes));
 
 	// check parameters
-	int devIndex = (int)cookie;
-	if (devIndex == kControlDevice) {
+	open_cookie* cookie = (open_cookie*)_cookie;
+	int32 deviceIndex = cookie->device_index;
+	if (deviceIndex == kControlDevice) {
 		TRACE(("encrypted_drive: writing to control device not allowed\n"));
 		return B_NOT_ALLOWED;
 	}
 	if (position < 0)
 		return B_BAD_VALUE;
 
+	device_info &info = gDeviceInfos[deviceIndex];
 	lock_driver();
-	device_info &info = gDeviceInfos[devIndex];
 
 	if (info.geometry.read_only) {
 		unlock_driver();
@@ -530,7 +584,7 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 		// so we have to make sure any access is block aligned.
 		dprintf("TODO write partial!\n");
 		unlock_driver();
-		return -1;
+		return B_NOT_SUPPORTED;
 	}
 
 	// adjust position and numBytes according to the file size
@@ -543,22 +597,31 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 
 	size_t bytesLeft = *numBytes;
 	status_t error = B_OK;
-	for (uint32 i = 0; bytesLeft > 0; i++) {
-		size_t bytes = min_c(bytesLeft, sizeof(sBuffer));
-		memcpy(sBuffer, buffer, bytes);
+	while (bytesLeft > 0) {
+		size_t bytes = min_c(bytesLeft, sizeof(cookie->buffer));
+		if (user_memcpy(cookie->buffer, buffer, bytes) != B_OK) {
+			error = B_BAD_ADDRESS;
+			break;
+		}
 
-		info.context.EncryptBlock(sBuffer, bytes,
-			position / info.geometry.bytes_per_sector);
+		EncryptTask task(info.context, cookie->buffer, bytes,
+			position / BLOCK_SIZE);
+		TRACE(("encrypt %d: %p, %" B_PRIuSIZE ", index %" B_PRIu64 "\n",
+				find_thread(NULL), cookie->buffer, bytes,
+				position / BLOCK_SIZE));
+		sWorker.AddTask(task);
+		sWorker.WaitFor(task);
 
-		ssize_t bytesWritten = write_pos(info.fd, position, sBuffer, bytes);
+		ssize_t bytesWritten = write_pos(info.fd, position, cookie->buffer,
+			bytes);
 		if (bytesWritten < 0) {
 			error = errno;
 			break;
-		} else {
-			buffer = (const void*)((const uint8*)buffer + bytes);
-			bytesLeft -= bytes;
-			position += bytes;
 		}
+
+		buffer = (const void*)((const uint8*)buffer + bytes);
+		bytesLeft -= bytes;
+		position += bytes;
 	}
 
 	if (bytesLeft > 0)
@@ -570,14 +633,15 @@ encrypted_drive_write(void *cookie, off_t position, const void *buffer,
 
 
 static status_t
-encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
+encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 {
 	TRACE(("encrypted_drive: ioctl\n"));
 
-	int devIndex = (int)cookie;
-	device_info &info = gDeviceInfos[devIndex];
+	open_cookie* cookie = (open_cookie*)_cookie;
+	int32 deviceIndex = cookie->device_index;
+	device_info& info = gDeviceInfos[deviceIndex];
 
-	if (devIndex == kControlDevice || info.unused) {
+	if (deviceIndex == kControlDevice || info.unused) {
 		// control device or unused data device
 		switch (op) {
 			case B_GET_DEVICE_SIZE:
@@ -609,7 +673,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 				TRACE(("encrypted_drive: ENCRYPTED_DRIVE_REGISTER_FILE\n"));
 
 				encrypted_drive_info *driveInfo = (encrypted_drive_info *)arg;
-				if (devIndex != kControlDevice || driveInfo == NULL
+				if (deviceIndex != kControlDevice || driveInfo == NULL
 					|| driveInfo->magic != ENCRYPTED_DRIVE_MAGIC
 					|| driveInfo->drive_info_size != sizeof(encrypted_drive_info)
 					|| driveInfo->key_length > 0 && driveInfo->key == NULL)
@@ -673,7 +737,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 			case ENCRYPTED_DRIVE_ENCRYPT_BUFFER:
 			{
 				encrypted_drive_info* driveInfo = (encrypted_drive_info*)arg;
-				if (devIndex != kControlDevice || driveInfo == NULL
+				if (deviceIndex != kControlDevice || driveInfo == NULL
 					|| driveInfo->magic != ENCRYPTED_DRIVE_MAGIC
 					|| driveInfo->drive_info_size != sizeof(encrypted_drive_info)
 					|| driveInfo->key_length > 0 && driveInfo->key == NULL)
@@ -684,7 +748,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 			case ENCRYPTED_DRIVE_DECRYPT_BUFFER:
 			{
 				encrypted_drive_info* driveInfo = (encrypted_drive_info*)arg;
-				if (devIndex != kControlDevice || driveInfo == NULL
+				if (deviceIndex != kControlDevice || driveInfo == NULL
 					|| driveInfo->magic != ENCRYPTED_DRIVE_MAGIC
 					|| driveInfo->drive_info_size != sizeof(encrypted_drive_info)
 					|| driveInfo->key_length > 0 && driveInfo->key == NULL)
@@ -792,7 +856,7 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 				if (info.open_count == 0) {
 					// The device is not used anymore, we can uninitialize
 					// it now
-					uninit_device_info(devIndex);
+					uninit_device_info(deviceIndex);
 				}
 
 				// on the last unregistration we need to close the
@@ -829,14 +893,6 @@ encrypted_drive_control(void *cookie, uint32 op, void *arg, size_t len)
 		}
 	}
 
-}
-
-
-static status_t
-encrypted_drive_free(void *cookie)
-{
-	TRACE(("encrypted_drive: free cookie()\n"));
-	return B_OK;
 }
 
 
