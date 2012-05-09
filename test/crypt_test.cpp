@@ -14,6 +14,10 @@
 #include <string.h>
 
 
+const size_t kTestSize = 65536*1024;
+const size_t kBufferSize = 65536;
+
+
 extern "C" void
 dprintf(const char *format,...)
 {
@@ -79,8 +83,17 @@ main(int argc, char** argv)
 	uint8* key = (uint8*)argv[2];
 	size_t keyLength = strlen(argv[2]);
 
+	init_crypt();
+
+	Worker worker;
+	worker.Init();
+
 	VolumeCryptContext context;
 	status_t status;
+
+	uint8* block = (uint8*)malloc(kBufferSize);
+	if (block == NULL)
+		return 1;
 
 	if (initialize) {
 		// generate random data to be used as salt and AES keys
@@ -92,12 +105,23 @@ main(int argc, char** argv)
 
 		if (status == B_OK) {
 			// write test data
-			uint8 block[512];
-			for (int i = 0; i < sizeof(block); i++)
+			for (int i = 0; i < kBufferSize; i++)
 				block[i] = i % 256;
 
-			context.EncryptBlock(block, 512, context.Offset() / 512);
-			write_pos(fd, context.Offset(), block, 512);
+			off_t offset = context.Offset();
+			size_t written = 0;
+			while (written < kTestSize) {
+				size_t toWrite = min_c(kBufferSize, kTestSize - written);
+
+//				context.EncryptBlock(block, toWrite, offset / BLOCK_SIZE);
+				EncryptTask task(context, block, toWrite, offset / BLOCK_SIZE);
+				worker.AddTask(task);
+				worker.WaitFor(task);
+				write_pos(fd, offset, block, toWrite);
+
+				written += toWrite;
+				offset += toWrite;
+			}
 		}
 	} else {
 		status = context.Detect(fd, key, keyLength);
@@ -105,12 +129,36 @@ main(int argc, char** argv)
 	}
 
 	if (status == B_OK) {
-		uint8 block[512];
-		read_pos(fd, context.Offset(), block, 512);
-		context.DecryptBlock(block, 512, context.Offset() / 512);
+		off_t offset = context.Offset();
+		size_t totalBytesRead = 0;
+		while (totalBytesRead < kTestSize) {
+			size_t toRead = min_c(kBufferSize, kTestSize - totalBytesRead);
+			ssize_t bytesRead = read_pos(fd, offset, block, toRead);
+			if (bytesRead == toRead) {
+//				context.DecryptBlock(block, toRead, offset / BLOCK_SIZE);
+				DecryptTask task(context, block, toRead, offset / BLOCK_SIZE);
+				worker.AddTask(task);
+				worker.WaitFor(task);
 
-		dump_block((char*)block, 512, "");
+				for (int i = 0; i < toRead; i++) {
+					if (block[i] != i % 256) {
+						fprintf(stderr, "Block at %d is corrupt!\n", i);
+						dump_block((char*)&block[i], min_c(128, toRead - i),
+							"Corrupt");
+						break;
+					}
+				}
+			} else {
+				fprintf(stderr, "Could not read block: %s\n",
+					strerror(bytesRead));
+				break;
+			}
+
+			totalBytesRead += toRead;
+			offset += toRead;
+		}
 	}
+	free(block);
 
 	close(fd);
 	return 0;
