@@ -9,7 +9,11 @@
 
 
 #include "encrypted_drive.h"
+
 #include "encrypted_drive_icon.h"
+#include "crypt.h"
+
+#include <util/AutoLock.h>
 
 #include <fcntl.h>
 #include <errno.h>
@@ -18,8 +22,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-#include "crypt.h"
 
 
 //#define TRACE_DRIVER
@@ -82,31 +84,7 @@ struct device_info gDeviceInfos[kDeviceCount];
 static int32 gRegistrationCount = 0;
 static int gControlDeviceFD = -1;
 static Worker sWorker;
-
-
-static void
-lock_driver()
-{
-	thread_id thread = find_thread(NULL);
-	if (sDriverLock.owner != thread) {
-		if (atomic_add(&sDriverLock.count, -1) <= 0)
-			acquire_sem(sDriverLock.sem);
-		sDriverLock.owner = thread;
-	}
-	sDriverLock.nesting++;
-}
-
-
-static void
-unlock_driver()
-{
-	thread_id thread = find_thread(NULL);
-	if (sDriverLock.owner == thread && --sDriverLock.nesting == 0) {
-		sDriverLock.owner = -1;
-		if (atomic_add(&sDriverLock.count, 1) < 0)
-			release_sem(sDriverLock.sem);
-	}
-}
+static recursive_lock sLock;
 
 
 static inline bool
@@ -345,10 +323,7 @@ init_driver(void)
 {
 	TRACE(("encrypted_drive: init\n"));
 
-	sDriverLock.sem = create_sem(0, "encrypted_drive lock");
-	sDriverLock.count = 1;
-	sDriverLock.owner = -1;
-	sDriverLock.nesting = 0;
+	recursive_lock_init(&sLock, "encrypted_drive lock");
 
 	new(&sWorker) Worker();
 	sWorker.Init();
@@ -368,7 +343,6 @@ void
 uninit_driver(void)
 {
 	TRACE(("encrypted_drive: uninit\n"));
-	delete_sem(sDriverLock.sem);
 
 	// uninit the device infos
 	for (int32 i = 0; i < kDeviceCount; i++) {
@@ -377,6 +351,8 @@ uninit_driver(void)
 
 	uninit_crypt();
 	sWorker.~Worker();
+
+	recursive_lock_destroy(&sLock);
 }
 
 
@@ -404,37 +380,31 @@ encrypted_drive_open(const char* name, uint32 flags, void** _cookie)
 {
 	TRACE(("encrypted_drive: open %s\n", name));
 
-	lock_driver();
+	RecursiveLocker locker(sLock);
 
 	int32 deviceIndex = dev_index_for_path(name);
-	status_t status = B_OK;
 	open_cookie* cookie;
 
 	TRACE(("encrypted_drive: deviceIndex %ld!\n", deviceIndex));
 
 	if (!is_valid_device_index(deviceIndex)) {
 		TRACE(("encrypted_drive: wrong index!\n"));
-		status = B_BAD_VALUE;
-		goto out;
+		return B_BAD_VALUE;
 	}
 
 	if (gDeviceInfos[deviceIndex].unused) {
 		TRACE(("encrypted_drive: device is unused!\n"));
-		status = B_NO_INIT;
-		goto out;
+		return B_NO_INIT;
 	}
 
 	if (!gDeviceInfos[deviceIndex].registered) {
 		TRACE(("encrypted_drive: device has been unregistered!\n"));
-		status = B_NOT_ALLOWED;
-		goto out;
+		return B_NOT_ALLOWED;
 	}
 
 	cookie = new(std::nothrow) open_cookie();
-	if (cookie == NULL) {
-		status = B_NO_MEMORY;
-		goto out;
-	}
+	if (cookie == NULL)
+		return B_NO_MEMORY;
 
 	cookie->device_index = deviceIndex;
 	*_cookie = cookie;
@@ -442,9 +412,7 @@ encrypted_drive_open(const char* name, uint32 flags, void** _cookie)
 	if (deviceIndex != kControlDevice)
 		gDeviceInfos[deviceIndex].open_count++;
 
-out:
-	unlock_driver();
-	return status;
+	return B_OK;
 }
 
 
@@ -458,7 +426,7 @@ encrypted_drive_close(void* _cookie)
 	if (!is_valid_data_device_index(deviceIndex))
 		return B_OK;
 
-	lock_driver();
+	RecursiveLocker locker(sLock);
 
 	gDeviceInfos[deviceIndex].open_count--;
 	if (gDeviceInfos[deviceIndex].open_count == 0
@@ -466,8 +434,6 @@ encrypted_drive_close(void* _cookie)
 		// The last FD is closed and the device has been unregistered. Free its info.
 		uninit_device_info(deviceIndex);
 	}
-
-	unlock_driver();
 
 	return B_OK;
 }
@@ -500,7 +466,7 @@ encrypted_drive_read(void* _cookie, off_t position, void* buffer,
 		return B_BAD_VALUE;
 
 	device_info& info = gDeviceInfos[deviceIndex];
-	lock_driver();
+	RecursiveLocker locker(sLock);
 
 	// adjust position and numBytes according to the file size
 	if (position > info.context.Size())
@@ -512,7 +478,6 @@ encrypted_drive_read(void* _cookie, off_t position, void* buffer,
 		// We use the block number as part of the decryption mechanism,
 		// so we have to make sure any access is block aligned.
 		dprintf("TODO read partial!\n");
-		unlock_driver();
 		return B_NOT_SUPPORTED;
 	}
 
@@ -551,7 +516,6 @@ encrypted_drive_read(void* _cookie, off_t position, void* buffer,
 	if (bytesLeft > 0)
 		*numBytes -= bytesLeft;
 
-	unlock_driver();
 	return error;
 }
 
@@ -573,17 +537,15 @@ encrypted_drive_write(void* _cookie, off_t position, const void* buffer,
 		return B_BAD_VALUE;
 
 	device_info &info = gDeviceInfos[deviceIndex];
-	lock_driver();
+	RecursiveLocker locker(sLock);
 
-	if (info.geometry.read_only) {
-		unlock_driver();
+	if (info.geometry.read_only)
 		return B_READ_ONLY_DEVICE;
-	}
+
 	if (position % info.geometry.bytes_per_sector != 0) {
 		// We use the block number as part of the decryption mechanism,
 		// so we have to make sure any access is block aligned.
 		dprintf("TODO write partial!\n");
-		unlock_driver();
 		return B_NOT_SUPPORTED;
 	}
 
@@ -627,7 +589,6 @@ encrypted_drive_write(void* _cookie, off_t position, const void* buffer,
 	if (bytesLeft > 0)
 		*numBytes -= bytesLeft;
 
-	unlock_driver();
 	return error;
 }
 
@@ -682,7 +643,7 @@ encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 				status_t error = B_ERROR;
 				int32 i;
 
-				lock_driver();
+				RecursiveLocker locker(sLock);
 
 				// first, look if we already have opened that file and see
 				// if it's available to us which happens when it has been
@@ -730,7 +691,6 @@ encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 					}
 				}
 
-				unlock_driver();
 				return error;
 			}
 
@@ -847,10 +807,9 @@ encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 			case ENCRYPTED_DRIVE_UNREGISTER_FILE:
 			{
 				TRACE(("encrypted_drive: ENCRYPTED_DRIVE_UNREGISTER_FILE\n"));
-				lock_driver();
+				RecursiveLocker locker(sLock);
 
 				bool wasRegistered = info.registered;
-
 				info.registered = false;
 
 				if (info.open_count == 0) {
@@ -866,7 +825,6 @@ encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 					gControlDeviceFD = -1;
 				}
 
-				unlock_driver();
 				return B_OK;
 			}
 			case ENCRYPTED_DRIVE_GET_INFO:
