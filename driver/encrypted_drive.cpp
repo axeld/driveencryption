@@ -68,6 +68,7 @@ typedef struct device_info {
 	char				file[B_PATH_NAME_LENGTH];
 	const char*			device_path;
 	device_geometry		geometry;
+	mutex				lock;
 } device_info;
 
 struct open_cookie {
@@ -142,10 +143,7 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 		return B_BAD_VALUE;
 
 	bool readOnly = initInfo->read_only;
-	mode_t mode = readOnly ? O_RDONLY : O_RDWR;
-#ifdef __HAIKU__
-	mode |= O_NOCACHE;
-#endif
+	mode_t mode = O_NOCACHE | (readOnly ? O_RDONLY : O_RDWR);
 
 	// open the file
 	int fd = open(initInfo->file_name, mode);
@@ -153,10 +151,7 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 		// try again with read-only
 		initInfo->read_only = true;
 		readOnly = true;
-		mode = O_RDONLY;
-#ifdef __HAIKU__
-		mode |= O_NOCACHE;
-#endif
+		mode = O_RDONLY | O_NOCACHE;
 		fd = open(initInfo->file_name, mode);
 	}
 	if (fd < 0)
@@ -202,23 +197,6 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 	if (error == B_OK && S_ISREG(stat.st_mode)) {
 		// Disable caching for underlying file! (else this driver will deadlock)
 		// We probably cannot resize the file once the cache has been disabled!
-
-#ifndef __HAIKU__
-		// This applies to BeOS only:
-		// Work around a bug in BFS: the file is not synced before the cache is
-		// turned off, and thus causing possible inconsistencies.
-		// Unfortunately, this only solves one half of the issue; there is
-		// no way to remove the blocks in the cache, so changes made to the
-		// image have the chance to get lost.
-		fsync(fd);
-
-		// This is a special reserved ioctl() opcode not defined anywhere in
-		// the Be headers.
-		if (ioctl(fd, 10000) != 0) {
-			dprintf("encrypted_drive: disable caching ioctl failed\n");
-			return errno;
-		}
-#endif
 	}
 
 	if (error < B_OK) {
@@ -236,6 +214,8 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 	info.registered = true;
 	strcpy(info.file, initInfo->file_name);
 	info.device_path = sDeviceName[index];
+	mutex_init(&info.lock, "encrypted device");
+
 	// open_count doesn't have to be changed here
 	// (encrypted_drive_open() will do that for us)
 
@@ -256,6 +236,7 @@ uninit_device_info(int32 index)
 		return B_BAD_VALUE;
 
 	close(info.fd);
+	mutex_destroy(&info.lock);
 	clear_device_info(index);
 	return B_OK;
 }
@@ -431,7 +412,8 @@ encrypted_drive_close(void* _cookie)
 	gDeviceInfos[deviceIndex].open_count--;
 	if (gDeviceInfos[deviceIndex].open_count == 0
 		&& !gDeviceInfos[deviceIndex].registered) {
-		// The last FD is closed and the device has been unregistered. Free its info.
+		// The last FD is closed and the device has been unregistered.
+		// Free its info.
 		uninit_device_info(deviceIndex);
 	}
 
@@ -466,7 +448,7 @@ encrypted_drive_read(void* _cookie, off_t position, void* buffer,
 		return B_BAD_VALUE;
 
 	device_info& info = gDeviceInfos[deviceIndex];
-	RecursiveLocker locker(sLock);
+	MutexLocker locker(info.lock);
 
 	// adjust position and numBytes according to the file size
 	if (position > info.context.Size())
@@ -537,7 +519,7 @@ encrypted_drive_write(void* _cookie, off_t position, const void* buffer,
 		return B_BAD_VALUE;
 
 	device_info &info = gDeviceInfos[deviceIndex];
-	RecursiveLocker locker(sLock);
+	MutexLocker locker(info.lock);
 
 	if (info.geometry.read_only)
 		return B_READ_ONLY_DEVICE;
