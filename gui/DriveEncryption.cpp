@@ -127,7 +127,7 @@ DriveEncryption::_UpdateSettingsFrom(BMessage* message)
 		BMessage previous;
 		fSettings.FindMessage("drives", &previous);
 		// TODO: compare old and new drives!
-		if (previous.IsEmpty() != drives.IsEmpty()) {
+		if (!previous.IsEmpty() || !drives.IsEmpty()) {
 			if (drives.IsEmpty())
 				fSettings.RemoveName("drives");
 			else if (fSettings.ReplaceMessage("drives", &drives) != B_OK)
