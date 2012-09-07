@@ -1348,7 +1348,7 @@ VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 	header.magic = B_HOST_TO_BENDIAN_INT32(kTrueCryptMagic);
 	header.version = B_HOST_TO_BENDIAN_INT16(0x4);
 	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x600);
-	header.volume_size = B_HOST_TO_BENDIAN_INT64(fOffset + fSize);
+	header.volume_size = B_HOST_TO_BENDIAN_INT64(fSize);
 	header.encrypted_offset = B_HOST_TO_BENDIAN_INT64(fOffset);
 	header.encrypted_size = B_HOST_TO_BENDIAN_INT64(fSize);
 	header.flags = 0;
