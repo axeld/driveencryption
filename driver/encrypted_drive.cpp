@@ -52,13 +52,6 @@ static const char *sDeviceName[] = {
 int32 api_version = B_CUR_DRIVER_API_VERSION;
 extern device_hooks sDeviceHooks;
 
-static struct benaphore {
-	sem_id		sem;
-	vint32		count;
-	thread_id	owner;
-	int32		nesting;
-} sDriverLock;
-
 typedef struct device_info {
 	int32				open_count;
 	int					fd;
