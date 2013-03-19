@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2012, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2008-2013, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  *
  * The XTS/LRW modes and the RIPE160 code is distributed under the
@@ -1468,9 +1468,9 @@ CryptTask::CryptTask(CryptContext& context, uint8* data, size_t length,
 	fBlockIndex(blockIndex),
 	fUsedThreadContexts(0)
 {
-	fJobLength = fLength / sThreadCount;
-	if (fJobLength < BLOCK_SIZE)
-		fJobLength = BLOCK_SIZE;
+	fJobBlocks = (fLength / BLOCK_SIZE) + sThreadCount - 1) / sThreadCount;
+	if (fJobBlocks < 1)
+		fJobBlocks = 1;
 }
 
 
@@ -1501,11 +1501,11 @@ CryptTask::Put(ThreadContext* threadContext)
 void
 CryptTask::_PrepareJob(CryptJob* job)
 {
-	size_t bytes = min_c(fJobLength, fLength);
+	size_t bytes = min_c(fJobBlocks * BLOCK_SIZE, fLength);
 	job->SetTo(this, _Get(), fData, bytes, fBlockIndex);
 	fData += bytes;
 	fLength -= bytes;
-	fBlockIndex += fJobLength / BLOCK_SIZE;
+	fBlockIndex += fJobBlocks;
 }
 
 
