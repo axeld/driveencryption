@@ -94,7 +94,7 @@ Worker::Worker()
 
 Worker::~Worker()
 {
-	fCondition.NotifyAll(false, B_ERROR);
+	fCondition.NotifyAll(B_ERROR);
 	mutex_destroy(&fLock);
 
 	if (fThreads != NULL) {

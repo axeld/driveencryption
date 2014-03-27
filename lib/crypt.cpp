@@ -1312,15 +1312,10 @@ VolumeCryptContext::~VolumeCryptContext()
 status_t
 VolumeCryptContext::Detect(int fd, const uint8* key, uint32 keyLength)
 {
-	off_t size;
-	status_t status = get_size(fd, size);
-	if (status < B_OK)
-		return status;
-
-	if (_Detect(fd, 0, size, key, keyLength) == B_OK)
-		return B_OK;
-
-	return _Detect(fd, size - HIDDEN_HEADER_OFFSET, size, key, keyLength);
+	off_t headerOffset;
+	uint8 buffer[BLOCK_SIZE];
+	true_crypt_header header;
+	return _Detect(fd, key, keyLength, headerOffset, buffer, header);
 }
 
 
@@ -1330,7 +1325,7 @@ VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 {
 	off_t size;
 	status_t status = get_size(fd, size);
-	if (status < B_OK)
+	if (status != B_OK)
 		return status;
 
 	fOffset = max_c(4096, BLOCK_SIZE);
@@ -1353,42 +1348,64 @@ VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
 	header.encrypted_size = B_HOST_TO_BENDIAN_INT64(fSize);
 	header.flags = 0;
 	memcpy(header.disk_key, random, sizeof(header.disk_key));
-	random += sizeof(header.disk_key);
 	header.crc_checksum = B_HOST_TO_BENDIAN_INT32(crc32(header.disk_key, 256));
 	header.header_crc_checksum
 		= B_HOST_TO_BENDIAN_INT32(crc32((uint8*)&header, 188));
 
-	// use key + salt to encrypt the header, and write it to disk
+	return _WriteHeader(fd, key, keyLength, 0, buffer);
+}
 
-	uint8 diskKey[DISK_KEY_SIZE];
-	derive_key(key, keyLength, salt, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
 
-	status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
+status_t
+VolumeCryptContext::SetPassword(int fd, const uint8* oldKey,
+	uint32 oldKeyLength, const uint8* newKey, uint32 newKeyLength)
+{
+	off_t headerOffset;
+	uint8 buffer[BLOCK_SIZE];
+	true_crypt_header header;
+	status_t status = _Detect(fd, oldKey, oldKeyLength, headerOffset, buffer,
+		header);
 	if (status != B_OK)
 		return status;
 
-	Encrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
+//	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x800);
+	header.volume_size = B_HOST_TO_BENDIAN_INT64(fSize);
+	header.crc_checksum = B_HOST_TO_BENDIAN_INT32(crc32(header.disk_key, 256));
+	header.header_crc_checksum
+		= B_HOST_TO_BENDIAN_INT32(crc32((uint8*)&header, 188));
+	memcpy(buffer + PKCS5_SALT_SIZE, &header, sizeof(true_crypt_header));
 
-	ssize_t bytesWritten = write_pos(fd, 0, buffer, BLOCK_SIZE);
-	if (bytesWritten < 0)
-		return errno;
+dprintf("HEADER OFFSET: %Ld\n", headerOffset);
+dprintf("NEW KEY: %s\n", newKey);
+	return _WriteHeader(fd, newKey, newKeyLength, headerOffset, buffer);
+}
 
-	// use the decrypted header to init the volume encryption
 
-	Decrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
-	SetKey(header.disk_key, sizeof(header.disk_key));
+status_t
+VolumeCryptContext::_Detect(int fd, const uint8* key, uint32 keyLength,
+	off_t& offset, uint8* buffer, true_crypt_header& header)
+{
+	off_t size;
+	status_t status = get_size(fd, size);
+	if (status != B_OK)
+		return status;
 
-	return B_OK;
+	offset = 0;
+	if (_Detect(fd, offset, size, key, keyLength, buffer, header) == B_OK)
+		return B_OK;
+
+	offset = size - HIDDEN_HEADER_OFFSET;
+	return _Detect(fd, offset, size, key, keyLength, buffer, header);
 }
 
 
 status_t
 VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
-	uint32 keyLength)
+	uint32 keyLength, uint8* buffer, true_crypt_header& header)
 {
-	uint8 buffer[BLOCK_SIZE];
-	if (read_pos(fd, offset, buffer, BLOCK_SIZE) != BLOCK_SIZE)
-		return B_ERROR;
+	ssize_t bytesRead = read_pos(fd, offset, buffer, BLOCK_SIZE);
+	if (bytesRead != BLOCK_SIZE)
+		return bytesRead < 0 ? errno : B_IO_ERROR;
 
 	// decrypt header first
 
@@ -1403,7 +1420,6 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 	if (status != B_OK)
 		return status;
 
-	true_crypt_header header;
 	memcpy(&header, encryptedHeader, sizeof(true_crypt_header));
 
 	Decrypt((uint8*)&header, sizeof(true_crypt_header));
@@ -1456,6 +1472,34 @@ VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
 }
 
 
+//! Use key + salt to encrypt the header, and write it to disk.
+status_t
+VolumeCryptContext::_WriteHeader(int fd, const uint8* key, uint32 keyLength,
+	off_t headerOffset, uint8* buffer)
+{
+	uint8 diskKey[DISK_KEY_SIZE];
+	derive_key(key, keyLength, buffer, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
+
+	status_t status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
+	if (status != B_OK)
+		return status;
+
+	true_crypt_header& header = *(true_crypt_header*)&buffer[PKCS5_SALT_SIZE];
+	Encrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
+
+	ssize_t bytesWritten = write_pos(fd, headerOffset, buffer, BLOCK_SIZE);
+	if (bytesWritten < 0)
+		return errno;
+
+	// use the decrypted header to init the volume encryption
+
+	Decrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
+	SetKey(header.disk_key, sizeof(header.disk_key));
+
+	return B_OK;
+}
+
+
 //	#pragma mark - CryptTask
 
 
@@ -1468,7 +1512,7 @@ CryptTask::CryptTask(CryptContext& context, uint8* data, size_t length,
 	fBlockIndex(blockIndex),
 	fUsedThreadContexts(0)
 {
-	fJobBlocks = (fLength / BLOCK_SIZE) + sThreadCount - 1) / sThreadCount;
+	fJobBlocks = ((fLength / BLOCK_SIZE) + sThreadCount - 1) / sThreadCount;
 	if (fJobBlocks < 1)
 		fJobBlocks = 1;
 }

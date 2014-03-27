@@ -58,6 +58,8 @@ HAIKU_SOURCE = /boot/home/develop/haiku/haiku
 SYSTEM_INCLUDE_PATHS = $(HAIKU_SOURCE)/headers/private/kernel \
 	$(HAIKU_SOURCE)/private/kernel/arch \
 	$(HAIKU_SOURCE)/headers/private/kernel/arch/x86 \
+	$(HAIKU_SOURCE)/headers/private/kernel/boot/platform/bios_ia32 \
+	$(HAIKU_SOURCE)/headers/private/system/arch/x86 \
 	$(HAIKU_SOURCE)/headers/private/system \
 	$(HAIKU_SOURCE)/headers/private/shared \
 	$(HAIKU_SOURCE)/headers/private \
@@ -102,4 +104,4 @@ LINKER_FLAGS =
 TARGET_DIR = .
 
 ## include the makefile-engine
-include /boot/develop/etc/makefile-engine
+include /boot/system/develop/etc/makefile-engine

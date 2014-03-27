@@ -75,7 +75,7 @@ fill_random_buffer(uint8* buffer, uint32 size)
 				break;
 			case 224:
 				srand((uint32)system_time() ^ base ^ systemInfo.used_pages
-					^ (uint32)systemInfo.cpu_clock_speed);
+					^ systemInfo.cached_pages);
 				break;
 		}
 		buffer[i] = rand() % 255;

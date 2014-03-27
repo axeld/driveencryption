@@ -14,7 +14,7 @@
 #include <string.h>
 
 
-const size_t kTestSize = 65536*1024;
+const size_t kTestSize = 1024;//65536;//*1024;
 const size_t kBufferSize = 65536;
 
 
@@ -75,8 +75,9 @@ main(int argc, char** argv)
 		return 1;
 
 	bool initialize = argc > 3 && !strcmp(argv[3], "init");
+	bool change = argc > 4 && !strcmp(argv[3], "change");
 
-	int fd = open(argv[1], initialize ? O_RDWR : O_RDONLY);
+	int fd = open(argv[1], initialize || change ? O_RDWR : O_RDONLY);
 	if (fd < 0)
 		return 1;
 
@@ -123,6 +124,18 @@ main(int argc, char** argv)
 				offset += toWrite;
 			}
 		}
+	} else if (change) {
+		uint8* newKey = (uint8*)argv[4];
+		size_t newKeyLength = strlen(argv[4]);
+		status = context.SetPassword(fd, key, keyLength, newKey, newKeyLength);
+		if (status != B_OK) {
+			fprintf(stderr, "Could not set password: %s\n",
+				strerror(status));
+			return 1;
+		}
+
+//		status = context.Detect(fd, newKey, newKeyLength);
+		printf("-> %s, offset %lld\n", strerror(status), context.Offset());
 	} else {
 		status = context.Detect(fd, key, keyLength);
 		printf("detect: %s, offset %lld\n", strerror(status), context.Offset());
@@ -140,14 +153,16 @@ main(int argc, char** argv)
 				worker.AddTask(task);
 				worker.WaitFor(task);
 
-				for (int i = 0; i < toRead; i++) {
-					if (block[i] != i % 256) {
-						fprintf(stderr, "Block at %d is corrupt!\n", i);
-						dump_block((char*)&block[i], min_c(128, toRead - i),
-							"Corrupt");
-						break;
-					}
-				}
+				dump_block((char*)block, toRead, "READ");
+
+//				for (int i = 0; i < toRead; i++) {
+//					if (block[i] != i % 256) {
+//						fprintf(stderr, "Block at %d is corrupt!\n", i);
+//						dump_block((char*)&block[i], min_c(128, toRead - i),
+//							"Corrupt");
+//						break;
+//					}
+//				}
 			} else {
 				fprintf(stderr, "Could not read block: %s\n",
 					strerror(bytesRead));
