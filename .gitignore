@@ -5,3 +5,5 @@ lib/libcrypt.a
 login/Login
 test/crypt_test
 */objects.*
+*.hpkg
+pkg/

@@ -47,6 +47,21 @@ update-svn-attrs:
 	catattr --raw BEOS:TYPE makefile >/tmp/attr.type
 	svn propset beos:BEOS:TYPE -F /tmp/attr.type makefile
 
+hpkg default:
+	mkdir -p pkg/add-ons/kernel/drivers/bin
+	mkdir -p pkg/add-ons/kernel/drivers/dev/disk
+	mkdir -p pkg/bin
+	mkdir -p pkg/apps
+	mkdir -p pkg/data/licenses
+	cp .PackageInfo pkg/
+	cp driver/encrypted_drive pkg/add-ons/kernel/drivers/bin
+	ln -fs ../../bin/encrypted_drive pkg/add-ons/kernel/drivers/dev/disk/
+	cp bin/encrypted_drive_control pkg/bin/
+	cp login/Login pkg/apps/
+	cp gui/DriveEncryption pkg/apps/
+	cp lib/TrueCrypt\ License.txt pkg/data/licenses/TrueCrypt
+	package create -C pkg drive_encryption-r1.1~alpha1-1-x86_gcc2.hpkg
+
 src-distr:
 	mkdir -p distr/src/driver
 	mkdir -p distr/src/bin
