@@ -77,12 +77,11 @@ SYSTEM_INCLUDE_PATHS = \
 	$(SYSTEM_HEADERS_DIRECTORY)/private/system \
 	$(SYSTEM_HEADERS_DIRECTORY)/private/shared \
 	$(SYSTEM_HEADERS_DIRECTORY)/private \
-#	$(HAIKU_SOURCE)/build/config_headers/ #TODO
 
 #	Additional paths paths to look for local headers. These use the form
 #	#include "header". Directories that contain the files in SRCS are
 #	automatically included.
-LOCAL_INCLUDE_PATHS = ../headers/
+LOCAL_INCLUDE_PATHS = ../headers/ ../user_config_headers/
 
 #	Specify the level of optimization that you want. Specify either NONE (O0),
 #	SOME (O1), FULL (O2), or leave blank (for the default optimization level).
