@@ -1,5 +1,5 @@
 /*
- * Copyright 2012, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2012-2016, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -33,14 +33,21 @@ Task::NextJob()
 	Job* job = CreateNextJob();
 
 	MutexLocker locker(fLock);
-	if (job == NULL) {
-		fFinished = true;
-		if (fPending == 0)
-			fFinishCondition.NotifyOne();
-	} else
+	if (job != NULL)
 		fPending++;
 
 	return job;
+}
+
+
+void
+Task::TaskDone()
+{
+	MutexLocker locker(fLock);
+
+	fFinished = true;
+	if (fPending == 0)
+		fFinishCondition.NotifyOne();
 }
 
 
@@ -186,6 +193,7 @@ Worker::_Work()
 		Job* job = task->NextJob();
 		if (job == NULL) {
 			fTasks.Remove(task);
+			task->TaskDone();
 			return;
 		}
 

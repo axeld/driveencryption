@@ -1,5 +1,5 @@
 /*
- * Copyright 2012, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2012-2016, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 #ifndef WORKER_H
@@ -28,6 +28,7 @@ public:
 	virtual						~Task();
 
 			Job*				NextJob();
+			void				TaskDone();
 
 			void				JobDone(Job* job);
 			void				Wait();
