@@ -56,7 +56,7 @@ RSRCS =
 #	- 	if your library does not follow the standard library naming scheme,
 #		you need to specify the path to the library and it's name.
 #		(e.g. for mylib.a, specify "mylib.a" or "path/mylib.a")
-LIBS = ../lib/objects.x86-gcc2-debug/libcrypt.a be tracker
+LIBS = ../lib/$(OBJ_DIR)/libcrypt.a be tracker
 
 #	Specify additional paths to directories following the standard libXXX.so
 #	or libXXX.a naming scheme. You can specify full paths or paths relative
@@ -91,7 +91,7 @@ LOCALES =
 #	use. For example, setting DEFINES to "DEBUG=1" will cause the compiler
 #	option "-DDEBUG=1" to be used. Setting DEFINES to "DEBUG" would pass
 #	"-DDEBUG" on the compiler's command line.
-DEFINES = _ZETA_TS_FIND_DIR_
+DEFINES =
 
 #	Specify the warning level. Either NONE (suppress all warnings),
 #	ALL (enable all warnings), or leave blank (enable default warnings).
@@ -123,6 +123,8 @@ APP_VERSION :=
 #	binary in ~/add-ons/kernel/drivers/dev/video/usb, so that your driver will
 #	appear at /dev/video/usb when loaded. The default is "misc".
 DRIVER_PATH =
+
+TARGET_DIR = .
 
 ## Include the Makefile-Engine
 DEVEL_DIRECTORY := \
