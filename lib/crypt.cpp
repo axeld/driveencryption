@@ -253,6 +253,8 @@ public:
 	void SetTo(CryptTask* task, ThreadContext* context, uint8* data,
 		size_t length, uint64 blockIndex)
 	{
+		if (fThreadContext == NULL)
+			panic("Context must not be NULL!");
 		fTask = task;
 		fThreadContext = context;
 		fData = data;
@@ -1556,11 +1558,16 @@ CryptTask::_PrepareJob(CryptJob* job)
 ThreadContext*
 CryptTask::_Get()
 {
-	for (int32 i = 0; i < sThreadCount; i++) {
-		int32 bit = 1L << i;
-		if ((fUsedThreadContexts & bit) == 0) {
-			fUsedThreadContexts |= bit;
-			return fContext.fThreadContexts[i];
+	while (fUsedThreadContexts != 0xffffffff) {
+		for (int32 i = 0; i < sThreadCount; i++) {
+			int32 bit = 1L << i;
+			int32 used = atomic_get(&fUsedThreadContexts);
+			if ((used & bit) == 0) {
+				if (atomic_test_and_set(&fUsedThreadContexts, used | bit, used)
+						== used) {
+					return fContext.fThreadContexts[i];
+				}
+			}
 		}
 	}
 
