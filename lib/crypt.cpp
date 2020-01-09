@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2013, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2008-2020, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  *
  * The XTS/LRW modes and the RIPE160 code is distributed under the
@@ -1596,7 +1596,7 @@ init_crypt()
 {
 	system_info info;
 	if (get_system_info(&info) == B_OK)
-		sThreadCount = info.cpu_count;
+		sThreadCount = min_c(32, info.cpu_count);
 	if (sThreadCount == 0)
 		sThreadCount = 1;
 }

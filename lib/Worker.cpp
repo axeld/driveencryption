@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2016, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2012-2020, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -93,7 +93,7 @@ Worker::Worker()
 
 	system_info info;
 	if (get_system_info(&info) == B_OK)
-		fThreadCount = info.cpu_count - 1;
+		fThreadCount = min_c(31, info.cpu_count - 1);
 	if (fThreadCount < 0)
 		fThreadCount = 0;
 }
