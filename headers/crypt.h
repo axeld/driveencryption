@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2013, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2008-2020, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 #ifndef CRYPT_H
@@ -15,6 +15,9 @@
 #define KEY_SIZE			32
 #define BLOCK_SIZE			512
 
+class CryptJob;
+class DecryptJob;
+class EncryptJob;
 class EncryptionAlgorithm;
 class EncryptionMode;
 class ThreadContext;
@@ -53,6 +56,8 @@ protected:
 	EncryptionAlgorithm*	fAlgorithm;
 	EncryptionMode*			fMode;
 	ThreadContext**			fThreadContexts;
+	EncryptJob*				fEncryptJobs;
+	DecryptJob*				fDecryptJobs;
 };
 
 class VolumeCryptContext : public CryptContext {
@@ -83,25 +88,23 @@ protected:
 	bool					fHidden;
 };
 
-class CryptJob;
-
 class CryptTask : public Task {
 public:
 	CryptTask(CryptContext& context, uint8* data, size_t length,
 		uint64 blockIndex);
 	virtual ~CryptTask() {}
 
+protected:
 	EncryptionMode* Mode() { return fContext.fMode; }
 	bool IsDone() const { return fLength == 0; }
+	EncryptJob* EncryptJobs(int32 id);
+	DecryptJob* DecryptJobs(int32 id);
 
-	void Put(ThreadContext* threadContext);
-
-protected:
-	virtual Job* CreateNextJob();
-	virtual CryptJob* CreateJob() = 0;
+	virtual Job* CreateNextJob(int32 id);
+	virtual CryptJob* CreateJob(int32 id) = 0;
 
 private:
-	void _PrepareJob(CryptJob* job);
+	bool _PrepareJob(CryptJob* job, int32 id);
 	ThreadContext* _Get();
 
 protected:
@@ -109,7 +112,6 @@ protected:
 	uint8*			fData;
 	size_t			fLength;
 	uint64			fBlockIndex;
-	int32			fUsedThreadContexts;
 	size_t			fJobBlocks;
 };
 
@@ -123,7 +125,7 @@ public:
 	}
 
 protected:
-	virtual CryptJob* CreateJob();
+	virtual CryptJob* CreateJob(int32 id);
 };
 
 class EncryptTask : public CryptTask {
@@ -136,7 +138,7 @@ public:
 	}
 
 protected:
-	virtual CryptJob* CreateJob();
+	virtual CryptJob* CreateJob(int32 id);
 };
 
 

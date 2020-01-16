@@ -245,27 +245,26 @@ class CryptJob : public Job {
 public:
 	CryptJob()
 		:
-		fTask(NULL),
-		fThreadContext(NULL)
+		fEncryptionMode(NULL),
+		fThreadContext(NULL),
+		fData(NULL),
+		fLength(0),
+		fBlockIndex(0)
 	{
 	}
 
-	void SetTo(CryptTask* task, ThreadContext* context, uint8* data,
+	void SetTo(EncryptionMode* mode, ThreadContext* context, uint8* data,
 		size_t length, uint64 blockIndex)
 	{
-		if (fThreadContext == NULL)
-			panic("Context must not be NULL!");
-		fTask = task;
+		fEncryptionMode = mode;
 		fThreadContext = context;
 		fData = data;
 		fLength = length;
 		fBlockIndex = blockIndex;
 	}
 
-	void Done();
-
 protected:
-	CryptTask*		fTask;
+	EncryptionMode*	fEncryptionMode;
 	ThreadContext*	fThreadContext;
 	uint8*			fData;
 	size_t			fLength;
@@ -283,9 +282,8 @@ public:
 		TRACE("  %d: decrypt %p, %" B_PRIuSIZE ", index %" B_PRIu64
 			", context %p\n", find_thread(NULL), fData, fLength, fBlockIndex,
 			fThreadContext);
-		fTask->Mode()->DecryptBlock(*fThreadContext, fData, fLength,
+		fEncryptionMode->DecryptBlock(*fThreadContext, fData, fLength,
 			fBlockIndex);
-		Done();
 	}
 };
 
@@ -300,9 +298,8 @@ public:
 		TRACE("  %d: encrypt %p, %" B_PRIuSIZE ", index %" B_PRIu64
 			", context %p\n", find_thread(NULL), fData, fLength, fBlockIndex,
 			fThreadContext);
-		fTask->Mode()->EncryptBlock(*fThreadContext, fData, fLength,
+		fEncryptionMode->EncryptBlock(*fThreadContext, fData, fLength,
 			fBlockIndex);
-		Done();
 	}
 };
 
@@ -645,17 +642,6 @@ ThreadContext::_CapacityFor(size_t size)
 		nextPowerOfTwo <<= 1;
 	}
 	return nextPowerOfTwo;
-}
-
-
-//	#pragma mark - CryptJob
-
-
-void
-CryptJob::Done()
-{
-	fTask->Put(fThreadContext);
-	delete this;
 }
 
 
@@ -1187,7 +1173,9 @@ CryptContext::CryptContext()
 	:
 	fAlgorithm(NULL),
 	fMode(NULL),
-	fThreadContexts(NULL)
+	fThreadContexts(NULL),
+	fEncryptJobs(NULL),
+	fDecryptJobs(NULL)
 {
 }
 
@@ -1201,6 +1189,8 @@ CryptContext::~CryptContext()
 
 		delete[] fThreadContexts;
 	}
+	delete[] fEncryptJobs;
+	delete[] fDecryptJobs;
 }
 
 
@@ -1233,8 +1223,11 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 		return B_NO_MEMORY;
 
 	for (int32 i = 0; i < sThreadCount; i++) {
-		fThreadContexts[i] = new ThreadContext(threadContext);
+		fThreadContexts[i] = new(std::nothrow) ThreadContext(threadContext);
 	}
+
+	fEncryptJobs = new(std::nothrow) EncryptJob[sThreadCount];
+	fDecryptJobs = new(std::nothrow) DecryptJob[sThreadCount];
 
 	return SetKey(key, keyLength);
 }
@@ -1511,67 +1504,50 @@ CryptTask::CryptTask(CryptContext& context, uint8* data, size_t length,
 	fContext(context),
 	fData(data),
 	fLength(length),
-	fBlockIndex(blockIndex),
-	fUsedThreadContexts(0)
+	fBlockIndex(blockIndex)
 {
 	fJobBlocks = ((fLength / BLOCK_SIZE) + sThreadCount - 1) / sThreadCount;
 	if (fJobBlocks < 1)
 		fJobBlocks = 1;
 }
 
+EncryptJob*
+CryptTask::EncryptJobs(int32 id)
+{
+	return &fContext.fEncryptJobs[id];
+}
+
+
+DecryptJob*
+CryptTask::DecryptJobs(int32 id)
+{
+	return &fContext.fDecryptJobs[id];
+}
+
 
 Job*
-CryptTask::CreateNextJob()
+CryptTask::CreateNextJob(int32 id)
 {
 	if (IsDone())
 		return NULL;
 
-	CryptJob* job = CreateJob();
-	_PrepareJob(job);
+	CryptJob* job = CreateJob(id);
+	if (!_PrepareJob(job, id))
+		return NULL;
+
 	return job;
 }
 
 
-void
-CryptTask::Put(ThreadContext* threadContext)
-{
-	for (int32 i = 0; i < sThreadCount; i++) {
-		if (fContext.fThreadContexts[i] == threadContext) {
-			atomic_and(&fUsedThreadContexts, ~(1L << i));
-			break;
-		}
-	}
-}
-
-
-void
-CryptTask::_PrepareJob(CryptJob* job)
+bool
+CryptTask::_PrepareJob(CryptJob* job, int32 id)
 {
 	size_t bytes = min_c(fJobBlocks * BLOCK_SIZE, fLength);
-	job->SetTo(this, _Get(), fData, bytes, fBlockIndex);
+	job->SetTo(Mode(), fContext.fThreadContexts[id], fData, bytes, fBlockIndex);
 	fData += bytes;
 	fLength -= bytes;
 	fBlockIndex += fJobBlocks;
-}
-
-
-ThreadContext*
-CryptTask::_Get()
-{
-	while (fUsedThreadContexts != 0xffffffff) {
-		for (int32 i = 0; i < sThreadCount; i++) {
-			int32 bit = 1L << i;
-			int32 used = atomic_get(&fUsedThreadContexts);
-			if ((used & bit) == 0) {
-				if (atomic_test_and_set(&fUsedThreadContexts, used | bit, used)
-						== used) {
-					return fContext.fThreadContexts[i];
-				}
-			}
-		}
-	}
-
-	return NULL;
+	return true;
 }
 
 
@@ -1579,9 +1555,9 @@ CryptTask::_Get()
 
 
 CryptJob*
-DecryptTask::CreateJob()
+DecryptTask::CreateJob(int32 id)
 {
-	return new DecryptJob();
+	return DecryptJobs(id);
 }
 
 
@@ -1589,9 +1565,9 @@ DecryptTask::CreateJob()
 
 
 CryptJob*
-EncryptTask::CreateJob()
+EncryptTask::CreateJob(int32 id)
 {
-	return new EncryptJob();
+	return EncryptJobs(id);
 }
 
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2016, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2012-2020, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 #ifndef WORKER_H
@@ -27,14 +27,14 @@ public:
 								Task();
 	virtual						~Task();
 
-			Job*				NextJob();
+			Job*				NextJob(int32 id);
 			void				TaskDone();
 
 			void				JobDone(Job* job);
 			void				Wait();
 
 protected:
-	virtual	Job*				CreateNextJob() = 0;
+	virtual	Job*				CreateNextJob(int32 id) = 0;
 
 private:
 			mutex				fLock;
@@ -60,7 +60,7 @@ public:
 private:
 	static	status_t			_Worker(void* self);
 			void				_Worker();
-			void				_Work();
+			void				_Work(int32 id);
 
 private:
 			thread_id*			fThreads;

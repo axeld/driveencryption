@@ -11,6 +11,9 @@
 #include <new>
 
 
+static int32 sNextID;
+
+
 Task::Task()
 	:
 	fFinished(false),
@@ -28,9 +31,9 @@ Task::~Task()
 
 
 Job*
-Task::NextJob()
+Task::NextJob(int32 id)
 {
-	Job* job = CreateNextJob();
+	Job* job = CreateNextJob(id);
 
 	MutexLocker locker(fLock);
 	if (job != NULL)
@@ -145,7 +148,7 @@ Worker::AddTask(Task& task)
 void
 Worker::WaitFor(Task& task)
 {
-	_Work();
+	_Work(0);
 	task.Wait();
 }
 
@@ -161,6 +164,8 @@ Worker::_Worker(void* self)
 void
 Worker::_Worker()
 {
+	int32 id = 1 + atomic_add(&sNextID, 1);
+
 	while (true) {
 		MutexLocker locker(fLock);
 
@@ -175,13 +180,13 @@ Worker::_Worker()
 		} else
 			locker.Unlock();
 
-		_Work();
+		_Work(id);
 	}
 }
 
 
 void
-Worker::_Work()
+Worker::_Work(int32 id)
 {
 	while (true) {
 		MutexLocker locker(fLock);
@@ -190,7 +195,7 @@ Worker::_Work()
 		if (task == NULL)
 			return;
 
-		Job* job = task->NextJob();
+		Job* job = task->NextJob(id);
 		if (job == NULL) {
 			fTasks.Remove(task);
 			task->TaskDone();
