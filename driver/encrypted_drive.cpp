@@ -23,7 +23,6 @@
 #include <string.h>
 #include <unistd.h>
 
-
 //#define TRACE_DRIVER
 #ifdef TRACE_DRIVER
 #	define TRACE(x) dprintf x
@@ -31,6 +30,7 @@
 #	define TRACE(x) ;
 #endif
 
+void *__dso_handle;
 
 static int dev_index_for_path(const char *path);
 

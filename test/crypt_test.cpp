@@ -3,6 +3,8 @@
  * Distributed under the terms of the MIT License.
  */
 
+// issue #5  dprintf argument mismatch
+#define _KERNEL_MODE 0
 
 #include "crypt.h"
 

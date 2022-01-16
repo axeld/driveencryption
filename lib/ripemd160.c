@@ -31,6 +31,7 @@
 
 #include <ByteOrder.h>
 //#include <memory.h>
+#include <string.h>
 
 
 #define PUT_64BIT_LE(cp, value) do { \

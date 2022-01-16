@@ -6,6 +6,9 @@
  * Truecrypt License.
  */
 
+#ifndef _KERNEL_MODE
+#	define _KERNEL_MODE 1
+#endif
 
 #include "crypt.h"
 

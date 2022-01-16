@@ -85,7 +85,7 @@ LOCAL_INCLUDE_PATHS = ../headers/ ../user_config_headers/
 
 #	Specify the level of optimization that you want. Specify either NONE (O0),
 #	SOME (O1), FULL (O2), or leave blank (for the default optimization level).
-OPTIMIZE :=
+OPTIMIZE := O2
 
 # 	Specify the codes for languages you are going to support in this
 # 	application. The default "en" one must be provided too. "make catkeys"
@@ -117,7 +117,7 @@ DEBUGGER :=
 COMPILER_FLAGS =
 
 #	Specify any additional linker flags to be used.
-LINKER_FLAGS =
+LINKER_FLAGS = -lstdc++
 
 #	Specify the version of this binary. Example:
 #		-app 3 4 0 d 0 -short 340 -long "340 "`echo -n -e '\302\251'`"1999 GNU GPL"

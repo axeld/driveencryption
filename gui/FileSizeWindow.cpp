@@ -123,7 +123,7 @@ FileSizeWindow::_Size(off_t bytes)
 	if (bytes < 1024)
 		sprintf(string, "%Ld bytes", bytes);
 	else {
-		char *units[] = {"KB", "MB", "GB", "TB", NULL};
+		char *units[] = {(char*)"KB", (char*)"MB", (char*)"GB", (char*)"TB", NULL};
 		double size = bytes;
 		int32 i = -1;
 

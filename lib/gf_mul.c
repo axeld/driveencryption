@@ -53,6 +53,8 @@
 #include "gf_mul.h"
 
 #include <ByteOrder.h>
+#include <string.h>
+#include <stdlib.h>
 
 /* BUFFER_ALIGN32 or BUFFER_ALIGN64 must be defined at this point to    */
 /* enable faster operation by taking advantage of memory aligned values */
@@ -290,7 +292,7 @@ static mode(32t) gf_poly64[2] = { 0, 0xd8000000 };
 /* speed but compensates for machine endianess and hence works  */
 /* correctly on both styles of machine                          */
 
-inline void mul_x(mode(32t) x[4])
+static inline void mul_x(mode(32t) x[4])
 {   mode(32t)   t;
 
     bsw_32(x, 4);
@@ -311,7 +313,7 @@ inline void mul_x(mode(32t) x[4])
     bsw_32(x, 4);
 }
 
-inline void mul_x64(mode(32t) x[2])
+static inline void mul_x64(mode(32t) x[2])
 {   mode(32t)   t;
 
     bsw_32(x, 2);
@@ -341,7 +343,7 @@ inline void mul_x64(mode(32t) x[2])
 static const uint16 gft_le[256] = gf_dat(xp);
 static const uint16 gft_le64[256] = gf_dat(xp64);
 
-inline void mul_lex8(mode(32t) x[4])   /* mutiply with long words  */
+static inline void mul_lex8(mode(32t) x[4])   /* mutiply with long words  */
 {   mode(32t)   t = (x[3] >> 24);       /* in little endian format  */
     x[3] = (x[3] << 8) | (x[2] >> 24);
     x[2] = (x[2] << 8) | (x[1] >> 24);
@@ -349,7 +351,7 @@ inline void mul_lex8(mode(32t) x[4])   /* mutiply with long words  */
     x[0] = (x[0] << 8) ^ gft_le[t];
 }
 
-inline void mul_lex8_64(mode(32t) x[2])   /* mutiply with long words  */
+static inline void mul_lex8_64(mode(32t) x[2])   /* mutiply with long words  */
 {   mode(32t)   t = (x[1] >> 24);       /* in little endian format  */
     x[1] = (x[1] << 8) | (x[0] >> 24);
     x[0] = (x[0] << 8) ^ gft_le64[t];
@@ -364,7 +366,7 @@ inline void mul_lex8_64(mode(32t) x[2])   /* mutiply with long words  */
 static const uint16 gft_be[256] = gf_dat(xp);
 static const uint16 gft_be64[256] = gf_dat(xp64);
 
-inline void mul_bex8(mode(32t) x[4])   /* mutiply with long words  */
+static inline void mul_bex8(mode(32t) x[4])   /* mutiply with long words  */
 {   mode(32t)   t = (x[3] & 0xff);      /* in big endian format     */
     x[3] = (x[3] >> 8) | (x[2] << 24);
     x[2] = (x[2] >> 8) | (x[1] << 24);
@@ -372,7 +374,7 @@ inline void mul_bex8(mode(32t) x[4])   /* mutiply with long words  */
     x[0] = (x[0] >> 8) ^ (((mode(32t))gft_be[t]) << 16);
 }
 
-inline void mul_bex8_64(mode(32t) x[2])   /* mutiply with long words  */
+static inline void mul_bex8_64(mode(32t) x[2])   /* mutiply with long words  */
 {   mode(32t)   t = (x[1] & 0xff);      /* in big endian format     */
     x[1] = (x[1] >> 8) | (x[0] << 24);
     x[0] = (x[0] >> 8) ^ (((mode(32t))gft_be64[t]) << 16);

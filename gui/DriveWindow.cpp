@@ -843,7 +843,7 @@ DriveWindow::_CollectDevices(BMenu *menu, uint32 what, BEntry *startEntry)
 			if (size < 1024)
 				sprintf(string, "%Ld bytes", size);
 			else {
-				char *units[] = {"KB", "MB", "GB", "TB", NULL};
+				char *units[] = {(char*)"KB", (char*)"MB", (char*)"GB", (char*)"TB", NULL};
 				double value = size;
 				int32 i = -1;
 
@@ -927,7 +927,7 @@ DriveWindow::_SaveRequested(BMessage* message)
 	if (free < 1024)
 		snprintf(string, sizeof(string), "%Ld bytes ", free);
 	else {
-		char *units[] = {"KB", "MB", "GB", "TB", NULL};
+		char *units[] = {(char*)"KB", (char*)"MB", (char*)"GB", (char*)"TB", NULL};
 		double size = free;
 		int32 i = -1;
 
