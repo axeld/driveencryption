@@ -165,17 +165,16 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 
 		// default to 512 bytes block size
 		uint32 blockSize = 512;
-		// Optimally we have only 1 block per sector and only one head.
-		// Since we have only a uint32 for the cylinder count, this won't work
-		// for files > 2TB. So, we set the head count to the minimally possible
-		// value.
+
 		off_t blocks = info.context.Size() / blockSize;
-		uint32 heads = (blocks + ULONG_MAX - 1) / ULONG_MAX;
-		if (heads == 0)
-			heads = 1;
+		uint32 heads = 1;
+		while (blocks > UINT32_MAX) {
+			heads <<= 1;
+			blocks >>= 1;
+		}
 		info.geometry.bytes_per_sector = blockSize;
-	    info.geometry.sectors_per_track = 1;
-	    info.geometry.cylinder_count = blocks / heads;
+	    info.geometry.sectors_per_track = blocks;
+	    info.geometry.cylinder_count = 1;
 	    info.geometry.head_count = heads;
 	    info.geometry.device_type = B_DISK;	// TODO: Add a new constant.
 	    info.geometry.removable = false;
