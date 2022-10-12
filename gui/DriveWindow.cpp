@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2008, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2007-2022, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -38,6 +38,7 @@
 #include "mount_support.h"
 #include "PasswordWindow.h"
 #include "random.h"
+#include "utility.h"
 
 
 const uint32 kMsgNewFile = 'nwfi';
@@ -838,25 +839,8 @@ DriveWindow::_CollectDevices(BMenu *menu, uint32 what, BEntry *startEntry)
 		message->AddBool("is device", true);
 
 		BString label = path.Path();
-		if (size != 0) {
-			char string[64];
-			if (size < 1024)
-				sprintf(string, "%Ld bytes", size);
-			else {
-				char *units[] = {"KB", "MB", "GB", "TB", NULL};
-				double value = size;
-				int32 i = -1;
-
-				do {
-					value /= 1024.0;
-					i++;
-				} while (value >= 1024 && units[i + 1]);
-
-				sprintf(string, "%.1f %s", value, units[i]);
-			}
-
-			label << " (" << string << ")";
-		}
+		if (size != 0)
+			label << " (" << SizeString(size) << ")";
 
 		BMenuItem* item = new BMenuItem(label.String(), message);
 		if (_IsMounted(path))
@@ -922,23 +906,8 @@ DriveWindow::_SaveRequested(BMessage* message)
 	text << path.Leaf() << "\".\n";
 	BVolume volume(ref.device);
 
-	char string[64];
 	off_t free = volume.FreeBytes();
-	if (free < 1024)
-		snprintf(string, sizeof(string), "%Ld bytes ", free);
-	else {
-		char *units[] = {"KB", "MB", "GB", "TB", NULL};
-		double size = free;
-		int32 i = -1;
-
-		do {
-			size /= 1024.0;
-			i++;
-		} while (size >= 1024 && units[i + 1]);
-
-		snprintf(string, sizeof(string), "%.1f %s", size, units[i]);
-	}
-	text << "There are " << string << " left on this device.";
+	text << "There are " << SizeString(free) << " left on this device.";
 
 	FileSizeWindow* window = new FileSizeWindow("", text.String(),
 		2 * 1024 * 1024, free, this, message);

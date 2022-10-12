@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2009, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2007-2022, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -18,12 +18,14 @@
 #include <String.h>
 #include <TextControl.h>
 
+#include "utility.h"
+
 
 const uint32 kMsgEntered = 'ente';
 const uint32 kMsgChanged = 'chan';
 
-const off_t kGigaByte = 1024LL * 1024 * 1024;
-const off_t kMegaByte = 1024LL * 1024;
+static const off_t kGigaByte = 1024LL * 1024 * 1024;
+static const off_t kMegaByte = 1024LL * 1024;
 
 
 FileSizeWindow::FileSizeWindow(const char* title, const char* text, off_t min,
@@ -66,7 +68,7 @@ FileSizeWindow::FileSizeWindow(const char* title, const char* text, off_t min,
 	}
 
 	fSizeControl = new BTextControl(rect, NULL, "File Size:",
-		_Size(min).String(), NULL, B_FOLLOW_LEFT_RIGHT);
+		SizeString(min).String(), NULL, B_FOLLOW_LEFT_RIGHT);
 	fSizeControl->SetDivider(
 		fSizeControl->StringWidth(fSizeControl->Label()) + 8.0f);
 	fSizeControl->SetModificationMessage(new BMessage(kMsgChanged));
@@ -80,7 +82,7 @@ FileSizeWindow::FileSizeWindow(const char* title, const char* text, off_t min,
 	rect.top += fSizeControl->Bounds().Height() + 10;
 	fSlider = new BSlider(rect, "slider", NULL, NULL, min / fDivider,
 		max / fDivider, B_BLOCK_THUMB, B_FOLLOW_LEFT_RIGHT);
-	fSlider->SetLimitLabels(_Size(min).String(), _Size(max).String());
+	fSlider->SetLimitLabels(SizeString(min).String(), SizeString(max).String());
 	fSlider->SetModificationMessage(new BMessage(kMsgChanged));
 	fSlider->ResizeToPreferred();
 	top->AddChild(fSlider);
@@ -115,75 +117,13 @@ FileSizeWindow::~FileSizeWindow()
 }
 
 
-BString
-FileSizeWindow::_Size(off_t bytes)
-{
-	char string[64];
-
-	if (bytes < 1024)
-		sprintf(string, "%Ld bytes", bytes);
-	else {
-		char *units[] = {"KB", "MB", "GB", "TB", NULL};
-		double size = bytes;
-		int32 i = -1;
-
-		do {
-			size /= 1024.0;
-			i++;
-		} while (size >= 1024 && units[i + 1]);
-
-		sprintf(string, "%.1f %s", size, units[i]);
-	}
-
-	return BString(string);
-}
-
-
-off_t
-FileSizeWindow::_ParseSize(const char* string)
-{
-	char* end;
-	double size = strtod(string, &end);
-	off_t bytes = off_t(size);
-	if (size == 0.0) {
-		// for hex numbers
-		bytes = strtoll(string, &end, 0);
-		size = (double)bytes;
-	}
-
-	if (end == NULL)
-		return bytes;
-
-	while (isspace(end[0])) {
-		end++;
-	}
-
-	switch (end[0]) {
-		case 'K':
-		case 'k':
-			return off_t(size * 1024);
-		case 'M':
-		case 'm':
-			return off_t(size * kMegaByte);
-		case 'G':
-		case 'g':
-			return off_t(size * kGigaByte);
-		case 'T':
-		case 't':
-			return off_t(size * 1024 * kGigaByte);
-	}
-
-	return bytes;
-}
-
-
 void
 FileSizeWindow::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
 		case kMsgEntered:
 		{
-			off_t size = _ParseSize(fSizeControl->Text());
+			off_t size = ParseSize(fSizeControl->Text());
 			if (size == 0) {
 				fSizeControl->TextView()->SelectAll();
 				fSizeControl->MakeFocus(true);
@@ -215,11 +155,11 @@ FileSizeWindow::MessageReceived(BMessage* message)
 
 				message = new BMessage(*fSizeControl->ModificationMessage());
 				fSizeControl->SetModificationMessage(NULL);
-				fSizeControl->SetText(_Size(size).String());
+				fSizeControl->SetText(SizeString(size).String());
 				fSizeControl->SetModificationMessage(message);
 			} else {
 				// update slider
-				off_t size = _ParseSize(fSizeControl->Text());
+				off_t size = ParseSize(fSizeControl->Text());
 				if (size < fMinimum)
 					size = fMinimum;
 				else if (size > fMaximum)

@@ -30,7 +30,7 @@ APP_MIME_SIG =
 #	Also note that spaces in folder names do not work well with this Makefile.
 SRCS = DriveEncryption.cpp DriveWindow.cpp ColumnListView.cpp ColumnTypes.cpp \
 	PasswordWindow.cpp ChangePasswordWindow.cpp FileSizeWindow.cpp \
-	mount_support.cpp
+	mount_support.cpp utility.cpp
 
 #	Specify the resource definition files to use. Full or relative paths can be
 #	used.

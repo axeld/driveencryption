@@ -25,9 +25,6 @@ public:
 	virtual void DispatchMessage(BMessage* message, BHandler* target);
 
 private:
-	BString _Size(off_t);
-	off_t _ParseSize(const char* string);
-
 	BMessenger		fTarget;
 	BMessage*		fMessage;
 	BTextControl*	fSizeControl;
