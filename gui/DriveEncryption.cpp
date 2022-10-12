@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2009, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2007-2022, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -153,6 +153,7 @@ DriveEncryption::_TestForDriver()
 		"Could not open encrypted control device", "Ok", NULL, NULL,
 		B_WIDTH_AS_USUAL, B_STOP_ALERT);
 	alert->Go();
+	return false;
 }
 
 
