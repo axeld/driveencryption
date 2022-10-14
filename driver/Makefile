@@ -113,7 +113,7 @@ SYMBOLS :=
 DEBUGGER :=
 
 #	Specify any additional compiler flags to be used.
-COMPILER_FLAGS =
+COMPILER_FLAGS = -fno-use-cxa-atexit -std=gnu++98
 
 #	Specify any additional linker flags to be used.
 LINKER_FLAGS =
