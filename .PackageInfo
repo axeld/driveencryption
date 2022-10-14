@@ -1,5 +1,5 @@
 name			drive_encryption
-version			1.2-1
+version			1.3-1
 architecture	x86_gcc2
 summary			"A tool to encrypt devices and file images."
 description		"DriveEncryption is a suite of programs to allow you to encrypt devices and file images. The encryption is done via the AES algorithm, and protected via a password.
@@ -10,17 +10,17 @@ licenses {
 	"TrueCrypt" "MIT"
 }
 copyrights {
-	"Copyright 2007-2020, pinc Software"
+	"Copyright 2007-2022, pinc Software"
 }
 source-urls {
 	"https://github.com/axeld/driveencryption"
 }
 requires {
-	haiku >= r1~beta1_hrev53699-1
+	haiku >= r1~beta1_hrev5629-1
 }
 provides {
-	encrypted_drive = 1.2
-	cmd:encrypted_drive_control = 1.2
-	apps:DriveEncryption = 1.2
-	apps:Login = 1.2
+	encrypted_drive = 1.3
+	cmd:encrypted_drive_control = 1.3
+	apps:DriveEncryption = 1.3
+	apps:Login = 1.3
 }

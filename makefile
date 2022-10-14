@@ -21,7 +21,7 @@ test:
 
 .PHONY : lib driver bin gui login test
 
-VERSION = 1.2-1
+VERSION = 1.3-1
 
 hpkg: default
 	mkdir -p pkg/add-ons/kernel/drivers/bin
