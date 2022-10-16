@@ -28,7 +28,7 @@ APP_MIME_SIG =
 #	means this Makefile will not work correctly if two source files with the
 #	same name (source.c or source.cpp) are included from different directories.
 #	Also note that spaces in folder names do not work well with this Makefile.
-SRCS = encrypted_drive.cpp
+SRCS = encrypted_drive.cpp crypt.cpp Worker.cpp
 
 #	Specify the resource definition files to use. Full or relative paths can be
 #	used.

@@ -43,10 +43,10 @@ extern "C" {
 #endif
 
 void ripemd160_init(ripemd160_context *context);
-void ripemd160_transform(uint32 state[5], const uint8 block[64]);
+void ripemd160_transform(uint32 *state, const uint8 *block);
 void ripemd160_update(ripemd160_context *context, const uint8 *input,
 	uint32 length);
-void ripemd160_final(uint8 digest[20], ripemd160_context *context);
+void ripemd160_final(uint8 *digest, ripemd160_context *context);
 
 #ifdef __cplusplus
 }
