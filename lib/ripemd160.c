@@ -30,7 +30,7 @@
 #include "ripemd160.h"
 
 #include <ByteOrder.h>
-//#include <memory.h>
+#include <string.h>
 
 
 #define PUT_64BIT_LE(cp, value) do { \
@@ -160,13 +160,14 @@ ripemd160_final(uint8 digest[20], ripemd160_context *ctx)
 
 
 void
-ripemd160_transform(uint32 state[5], const uint8 block[64])
+ripemd160_transform(uint32 *state, const uint8 *block)
 {
-	uint32 a, b, c, d, e, aa, bb, cc, dd, ee, t, x[16];
+	uint32 a, b, c, d, e, aa, bb, cc, dd, ee, t;
 
 #if BYTE_ORDER == LITTLE_ENDIAN
-	memcpy(x, block, 64);
+	const uint32 *x = (const uint32 *)block;
 #else
+	uint32 x[16];
 	int i;
 
 	for (i = 0; i < 16; i++) {
