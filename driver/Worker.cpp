@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2012-2022, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -26,6 +26,7 @@ Task::Task()
 
 Task::~Task()
 {
+	mutex_lock(&fLock);
 	mutex_destroy(&fLock);
 }
 
@@ -105,6 +106,7 @@ Worker::Worker()
 Worker::~Worker()
 {
 	fCondition.NotifyAll(B_ERROR);
+	mutex_lock(&fLock);
 	mutex_destroy(&fLock);
 
 	if (fThreads != NULL) {
