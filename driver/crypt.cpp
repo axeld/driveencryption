@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2020, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2008-2025, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  *
  * The XTS/LRW modes and the RIPE160 code is distributed under the
@@ -10,82 +10,34 @@
 #include "crypt.h"
 
 #include "aes.h"
-#include "crc32.h"
 #include "gf_mul.h"
 #include "ripemd160.h"
 
-#include "Worker.h"
-
 #include <ByteOrder.h>
-#include <Drivers.h>
-#include <KernelExport.h>
 
-#include <errno.h>
 #include <new>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
 
+
+#ifndef DPRINTF
+#	ifdef USER_MODE
+#		define DPRINTF(...) printf(__VA_ARGS__)
+#	else
+#		define DPRINTF(...) dprintf(__VA_ARGS__)
+#	endif
+#endif
 
 //#define TRACE_CRYPT
 #ifdef TRACE_CRYPT
-#	define TRACE(...)	dprintf(__VA_ARGS__)
+#	define TRACE(...)	DPRINTF(__VA_ARGS__)
 #else
 #	define TRACE(...)	;
 #endif
-
-const uint32 kTrueCryptMagic = 'TRUE';
 
 #define DISK_KEY_SIZE				64
 #define HIDDEN_HEADER_OFFSET		1536
 #define RIPEMD160_ITERATIONS		2000
 #define BYTES_PER_XTS_BLOCK			16
 #define BLOCKS_PER_XTS_DATA_UNIT	(BLOCK_SIZE / BYTES_PER_XTS_BLOCK)
-
-struct true_crypt_header {
-	uint32	magic;
-	uint16	version;
-	uint16	required_program_version;
-	uint32	crc_checksum;
-	uint8	_reserved1[16];
-	uint64	hidden_size;
-	// v4 fields
-	uint64	volume_size;
-	uint64	encrypted_offset;
-	uint64	encrypted_size;
-	uint32	flags;
-	// v5
-	uint32	block_size;
-
-	uint8	_reserved2[120];
-	uint32	header_crc_checksum;
-	uint8	disk_key[256];
-
-	uint32 Magic() const
-		{ return B_BENDIAN_TO_HOST_INT32(magic); }
-	uint16 Version() const
-		{ return B_BENDIAN_TO_HOST_INT16(version); }
-	uint16 RequiredProgramVersion() const
-		{ return B_BENDIAN_TO_HOST_INT16(required_program_version); }
-	uint32 CrcChecksum() const
-		{ return B_BENDIAN_TO_HOST_INT32(crc_checksum); }
-	uint32 HeaderCrcChecksum() const
-		{ return B_BENDIAN_TO_HOST_INT32(header_crc_checksum); }
-	uint64 HiddenSize() const
-		{ return B_BENDIAN_TO_HOST_INT64(hidden_size); }
-	uint64 VolumeSize() const
-		{ return B_BENDIAN_TO_HOST_INT64(volume_size); }
-	uint64 EncryptedOffset() const
-		{ return B_BENDIAN_TO_HOST_INT64(encrypted_offset); }
-	uint64 EncryptedSize() const
-		{ return B_BENDIAN_TO_HOST_INT64(encrypted_size); }
-	uint32 Flags() const
-		{ return B_BENDIAN_TO_HOST_INT32(flags); }
-	uint32 BlockSize() const
-		{ return B_BENDIAN_TO_HOST_INT32(block_size); }
-} _PACKED;
 
 
 class ThreadContext {
@@ -157,31 +109,6 @@ private:
 	encryption_mode	fMode;
 };
 
-class EncryptionMode {
-public:
-	EncryptionMode() {}
-	virtual ~EncryptionMode() {}
-
-	virtual status_t Init(ThreadContext& context,
-		EncryptionAlgorithm* algorithm) = 0;
-	virtual status_t SetKey(ThreadContext& context, const uint8* key,
-		size_t keyLength) = 0;
-	virtual status_t SetCompleteKey(ThreadContext& context, const uint8* key,
-		size_t keyLength) = 0;
-	virtual void SetBlockOffset(off_t offset) = 0;
-
-	virtual void DecryptBlock(ThreadContext& context, uint8 *data,
-		size_t length, uint64 blockIndex) = 0;
-	virtual void EncryptBlock(ThreadContext& context, uint8 *data,
-		size_t length, uint64 blockIndex) = 0;
-
-	virtual void Decrypt(ThreadContext& context, uint8 *data,
-		size_t length) = 0;
-	virtual void Encrypt(ThreadContext& context, uint8 *data,
-		size_t length) = 0;
-
-	virtual encryption_mode Type() = 0;
-};
 
 class XTSMode : public EncryptionMode {
 public:
@@ -239,72 +166,6 @@ protected:
 	int32					fGaloisField;
 	off_t					fOffset;
 };
-
-
-class CryptJob : public Job {
-public:
-	CryptJob()
-		:
-		fEncryptionMode(NULL),
-		fThreadContext(NULL),
-		fData(NULL),
-		fLength(0),
-		fBlockIndex(0)
-	{
-	}
-
-	void SetTo(EncryptionMode* mode, ThreadContext* context, uint8* data,
-		size_t length, uint64 blockIndex)
-	{
-		fEncryptionMode = mode;
-		fThreadContext = context;
-		fData = data;
-		fLength = length;
-		fBlockIndex = blockIndex;
-	}
-
-protected:
-	EncryptionMode*	fEncryptionMode;
-	ThreadContext*	fThreadContext;
-	uint8*			fData;
-	size_t			fLength;
-	uint64			fBlockIndex;
-};
-
-class DecryptJob : public CryptJob {
-public:
-	DecryptJob()
-	{
-	}
-
-	virtual void Do()
-	{
-		TRACE("  %d: decrypt %p, %" B_PRIuSIZE ", index %" B_PRIu64
-			", context %p\n", find_thread(NULL), fData, fLength, fBlockIndex,
-			fThreadContext);
-		fEncryptionMode->DecryptBlock(*fThreadContext, fData, fLength,
-			fBlockIndex);
-	}
-};
-
-class EncryptJob : public CryptJob {
-public:
-	EncryptJob()
-	{
-	}
-
-	virtual void Do()
-	{
-		TRACE("  %d: encrypt %p, %" B_PRIuSIZE ", index %" B_PRIu64
-			", context %p\n", find_thread(NULL), fData, fLength, fBlockIndex,
-			fThreadContext);
-		fEncryptionMode->EncryptBlock(*fThreadContext, fData, fLength,
-			fBlockIndex);
-	}
-};
-
-
-static int32 sThreadCount;
 
 
 //	#pragma mark - RIPEMD160 key computation
@@ -447,67 +308,6 @@ xor128(uint64 *a, uint64 *b)
 {
 	*a++ ^= *b++;
 	*a ^= *b;
-}
-
-
-static void
-dump_true_crypt_header(true_crypt_header& header)
-{
-	dprintf("magic: %.4s\n", (char*)&header.magic);
-	dprintf("version: %x\n", header.Version());
-	dprintf("required program version: %x\n", header.RequiredProgramVersion());
-	dprintf("crc checksum: %lu (%lu)\n", header.CrcChecksum(),
-		crc32(header.disk_key, 256));
-	dprintf("hidden size: %lld\n", header.HiddenSize());
-
-	if (header.Version() >= 4) {
-		dprintf("volume size: %lld\n", header.VolumeSize());
-		dprintf("encrypted offset: %lld\n", header.EncryptedOffset());
-		dprintf("encrypted size: %lld\n", header.EncryptedSize());
-		dprintf("flags: %lx\n", header.Flags());
-		dprintf("header crc checksum: %lx\n", header.HeaderCrcChecksum());
-	}
-	if (header.Version() >= 5)
-		dprintf("block size: %lx\n", header.BlockSize());
-}
-
-
-static bool
-valid_true_crypt_header(true_crypt_header& header)
-{
-	if (header.Magic() != kTrueCryptMagic)
-		return false;
-	if (header.CrcChecksum() != crc32(header.disk_key, 256))
-		return false;
-
-	if (header.Version() >= 0x4
-		&& header.HeaderCrcChecksum() != crc32((uint8*)&header, 188))
-		return false;
-
-	return true;
-}
-
-
-static status_t
-get_size(int fd, off_t& size)
-{
-	struct stat stat;
-	if (fstat(fd, &stat) < 0)
-		return errno;
-
-	if (S_ISBLK(stat.st_mode) || S_ISCHR(stat.st_mode)) {
-		device_geometry geometry;
-		if (ioctl(fd, B_GET_GEOMETRY, &geometry) < 0)
-			return errno;
-
-		size = 1LL * geometry.head_count * geometry.cylinder_count
-			* geometry.sectors_per_track * geometry.bytes_per_sector;
-		if (size < 0)
-			size = 0;
-	} else
-		size = stat.st_size;
-
-	return B_OK;
 }
 
 
@@ -1174,8 +974,7 @@ CryptContext::CryptContext()
 	fAlgorithm(NULL),
 	fMode(NULL),
 	fThreadContexts(NULL),
-	fEncryptJobs(NULL),
-	fDecryptJobs(NULL)
+	fThreadCount(1)
 {
 }
 
@@ -1183,14 +982,12 @@ CryptContext::CryptContext()
 CryptContext::~CryptContext()
 {
 	if (fThreadContexts != NULL) {
-		for (int32 i = 0; i < sThreadCount; i++) {
+		for (int32 i = 0; i < fThreadCount; i++) {
 			delete fThreadContexts[i];
 		}
 
 		delete[] fThreadContexts;
 	}
-	delete[] fEncryptJobs;
-	delete[] fDecryptJobs;
 }
 
 
@@ -1218,16 +1015,9 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 	if (status != B_OK)
 		return status;
 
-	fThreadContexts = new(std::nothrow) ThreadContext*[sThreadCount];
-	if (fThreadContexts == NULL)
-		return B_NO_MEMORY;
-
-	for (int32 i = 0; i < sThreadCount; i++) {
-		fThreadContexts[i] = new(std::nothrow) ThreadContext(threadContext);
-	}
-
-	fEncryptJobs = new(std::nothrow) EncryptJob[sThreadCount];
-	fDecryptJobs = new(std::nothrow) DecryptJob[sThreadCount];
+	status = _InitThreadContext(threadContext);
+	if (status != B_OK)
+		return status;
 
 	return SetKey(key, keyLength);
 }
@@ -1236,7 +1026,7 @@ CryptContext::Init(encryption_algorithm algorithm, encryption_mode mode,
 status_t
 CryptContext::SetKey(const uint8* key, size_t keyLength)
 {
-	for (int32 i = 0; i < sThreadCount; i++) {
+	for (int32 i = 0; i < fThreadCount; i++) {
 		status_t status = fAlgorithm->SetCompleteKey(*fThreadContexts[i], key,
 			keyLength);
 		if (status == B_OK)
@@ -1247,6 +1037,13 @@ CryptContext::SetKey(const uint8* key, size_t keyLength)
 	}
 
 	return B_OK;
+}
+
+
+void
+CryptContext::SetBlockOffset(off_t offset)
+{
+	fMode->SetBlockOffset(offset);
 }
 
 
@@ -1278,6 +1075,23 @@ CryptContext::Encrypt(uint8 *buffer, size_t length)
 }
 
 
+/*virtual*/ status_t
+CryptContext::_InitThreadContext(ThreadContext& threadContext)
+{
+	fThreadContexts = new(std::nothrow) ThreadContext*[fThreadCount];
+	if (fThreadContexts == NULL)
+		return B_NO_MEMORY;
+
+	for (int32 i = 0; i < fThreadCount; i++) {
+		fThreadContexts[i] = new(std::nothrow) ThreadContext(threadContext);
+		if (fThreadContexts[i] == NULL)
+			return B_NO_MEMORY;
+	}
+
+	return B_OK;
+}
+
+
 void
 CryptContext::_Uninit()
 {
@@ -1291,304 +1105,7 @@ CryptContext::_Uninit()
 }
 
 
-// #pragma mark -
-
-
-VolumeCryptContext::VolumeCryptContext()
-{
-}
-
-
-VolumeCryptContext::~VolumeCryptContext()
-{
-}
-
-
-status_t
-VolumeCryptContext::Detect(int fd, const uint8* key, uint32 keyLength)
-{
-	off_t headerOffset;
-	uint8 buffer[BLOCK_SIZE];
-	true_crypt_header header;
-	return _Detect(fd, key, keyLength, headerOffset, buffer, header);
-}
-
-
-status_t
-VolumeCryptContext::Setup(int fd, const uint8* key, uint32 keyLength,
-	const uint8* random, uint32 randomLength)
-{
-	off_t size;
-	status_t status = get_size(fd, size);
-	if (status != B_OK)
-		return status;
-
-	fOffset = max_c(4096, BLOCK_SIZE);
-	fSize = size - fOffset;
-	fHidden = false;
-
-	const uint8* salt = random;
-	random += PKCS5_SALT_SIZE;
-
-	uint8 buffer[BLOCK_SIZE];
-	memcpy(buffer, salt, PKCS5_SALT_SIZE);
-	memset(buffer + PKCS5_SALT_SIZE, 0, BLOCK_SIZE - PKCS5_SALT_SIZE);
-
-	true_crypt_header& header = *(true_crypt_header*)&buffer[PKCS5_SALT_SIZE];
-	header.magic = B_HOST_TO_BENDIAN_INT32(kTrueCryptMagic);
-	header.version = B_HOST_TO_BENDIAN_INT16(0x4);
-	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x600);
-	header.volume_size = B_HOST_TO_BENDIAN_INT64(fSize);
-	header.encrypted_offset = B_HOST_TO_BENDIAN_INT64(fOffset);
-	header.encrypted_size = B_HOST_TO_BENDIAN_INT64(fSize);
-	header.flags = 0;
-	memcpy(header.disk_key, random, sizeof(header.disk_key));
-	header.crc_checksum = B_HOST_TO_BENDIAN_INT32(crc32(header.disk_key, 256));
-	header.header_crc_checksum
-		= B_HOST_TO_BENDIAN_INT32(crc32((uint8*)&header, 188));
-
-	return _WriteHeader(fd, key, keyLength, 0, buffer);
-}
-
-
-status_t
-VolumeCryptContext::SetPassword(int fd, const uint8* oldKey,
-	uint32 oldKeyLength, const uint8* newKey, uint32 newKeyLength)
-{
-	off_t headerOffset;
-	uint8 buffer[BLOCK_SIZE];
-	true_crypt_header header;
-	status_t status = _Detect(fd, oldKey, oldKeyLength, headerOffset, buffer,
-		header);
-	if (status != B_OK)
-		return status;
-
-//	header.required_program_version = B_HOST_TO_BENDIAN_INT16(0x800);
-	header.volume_size = B_HOST_TO_BENDIAN_INT64(fSize);
-	header.crc_checksum = B_HOST_TO_BENDIAN_INT32(crc32(header.disk_key, 256));
-	header.header_crc_checksum
-		= B_HOST_TO_BENDIAN_INT32(crc32((uint8*)&header, 188));
-	memcpy(buffer + PKCS5_SALT_SIZE, &header, sizeof(true_crypt_header));
-
-dprintf("HEADER OFFSET: %Ld\n", headerOffset);
-dprintf("NEW KEY: %s\n", newKey);
-	return _WriteHeader(fd, newKey, newKeyLength, headerOffset, buffer);
-}
-
-
-status_t
-VolumeCryptContext::_Detect(int fd, const uint8* key, uint32 keyLength,
-	off_t& offset, uint8* buffer, true_crypt_header& header)
-{
-	off_t size;
-	status_t status = get_size(fd, size);
-	if (status != B_OK)
-		return status;
-
-	offset = 0;
-	if (_Detect(fd, offset, size, key, keyLength, buffer, header) == B_OK)
-		return B_OK;
-
-	offset = size - HIDDEN_HEADER_OFFSET;
-	return _Detect(fd, offset, size, key, keyLength, buffer, header);
-}
-
-
-status_t
-VolumeCryptContext::_Detect(int fd, off_t offset, off_t size, const uint8* key,
-	uint32 keyLength, uint8* buffer, true_crypt_header& header)
-{
-	ssize_t bytesRead = read_pos(fd, offset, buffer, BLOCK_SIZE);
-	if (bytesRead != BLOCK_SIZE)
-		return bytesRead < 0 ? errno : B_IO_ERROR;
-
-	// decrypt header first
-
-	uint8* encryptedHeader = buffer + PKCS5_SALT_SIZE;
-	uint8* salt = buffer;
-	uint8 diskKey[DISK_KEY_SIZE];
-
-	derive_key(key, keyLength, salt, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
-//dprintf("salt %x, key %x\n", *(int*)salt, *(int*)diskKey);
-
-	status_t status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
-	if (status != B_OK)
-		return status;
-
-	memcpy(&header, encryptedHeader, sizeof(true_crypt_header));
-
-	Decrypt((uint8*)&header, sizeof(true_crypt_header));
-
-	if (!valid_true_crypt_header(header)) {
-		dump_true_crypt_header(header);
-
-		// Try with legacy encryption mode LRW instead
-		status = Init(ALGORITHM_AES, MODE_LRW, diskKey, DISK_KEY_SIZE);
-		if (status != B_OK)
-			return status;
-
-		memcpy(&header, encryptedHeader, sizeof(true_crypt_header));
-
-		Decrypt((uint8*)&header, sizeof(true_crypt_header));
-
-		if (!valid_true_crypt_header(header)) {
-			dump_true_crypt_header(header);
-			return B_PERMISSION_DENIED;
-		}
-	}
-
-	if (header.RequiredProgramVersion() >= 0x700) {
-		// TODO: test if the block size is really not 512 bytes
-		dprintf("header version not yet supported!\n");
-		return B_NOT_SUPPORTED;
-	}
-
-	// then init context with the keys from the unencrypted header
-
-	SetKey(header.disk_key, sizeof(header.disk_key));
-
-	if (offset != 0) {
-		// this is a hidden drive, take over the size from the header
-		fSize = B_BENDIAN_TO_HOST_INT64(header.hidden_size);
-		fOffset = offset - fSize;
-		fHidden = true;
-	} else {
-		fOffset = BLOCK_SIZE;
-		fSize = size - BLOCK_SIZE;
-		fHidden = false;
-	}
-	if (header.Version() >= 4) {
-		fOffset = header.EncryptedOffset();
-		fSize = header.EncryptedSize();
-	}
-
-	fMode->SetBlockOffset(fOffset / BLOCK_SIZE);
-	return B_OK;
-}
-
-
-//! Use key + salt to encrypt the header, and write it to disk.
-status_t
-VolumeCryptContext::_WriteHeader(int fd, const uint8* key, uint32 keyLength,
-	off_t headerOffset, uint8* buffer)
-{
-	uint8 diskKey[DISK_KEY_SIZE];
-	derive_key(key, keyLength, buffer, PKCS5_SALT_SIZE, diskKey, DISK_KEY_SIZE);
-
-	status_t status = Init(ALGORITHM_AES, MODE_XTS, diskKey, DISK_KEY_SIZE);
-	if (status != B_OK)
-		return status;
-
-	true_crypt_header& header = *(true_crypt_header*)&buffer[PKCS5_SALT_SIZE];
-	Encrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
-
-	ssize_t bytesWritten = write_pos(fd, headerOffset, buffer, BLOCK_SIZE);
-	if (bytesWritten < 0)
-		return errno;
-
-	// use the decrypted header to init the volume encryption
-
-	Decrypt((uint8*)&header, BLOCK_SIZE - PKCS5_SALT_SIZE);
-	SetKey(header.disk_key, sizeof(header.disk_key));
-
-	return B_OK;
-}
-
-
-//	#pragma mark - CryptTask
-
-
-CryptTask::CryptTask(CryptContext& context, uint8* data, size_t length,
-	uint64 blockIndex)
-	:
-	fContext(context),
-	fData(data),
-	fLength(length),
-	fBlockIndex(blockIndex)
-{
-	fJobBlocks = ((fLength / BLOCK_SIZE) + sThreadCount - 1) / sThreadCount;
-	if (fJobBlocks < 1)
-		fJobBlocks = 1;
-}
-
-EncryptJob*
-CryptTask::EncryptJobs(int32 id)
-{
-	return &fContext.fEncryptJobs[id];
-}
-
-
-DecryptJob*
-CryptTask::DecryptJobs(int32 id)
-{
-	return &fContext.fDecryptJobs[id];
-}
-
-
-Job*
-CryptTask::CreateNextJob(int32 id)
-{
-	if (IsDone())
-		return NULL;
-
-	CryptJob* job = CreateJob(id);
-	if (!_PrepareJob(job, id))
-		return NULL;
-
-	return job;
-}
-
-
-bool
-CryptTask::_PrepareJob(CryptJob* job, int32 id)
-{
-	size_t bytes = min_c(fJobBlocks * BLOCK_SIZE, fLength);
-	job->SetTo(Mode(), fContext.fThreadContexts[id], fData, bytes, fBlockIndex);
-	fData += bytes;
-	fLength -= bytes;
-	fBlockIndex += fJobBlocks;
-	return true;
-}
-
-
-//	#pragma mark - DecryptTask
-
-
-CryptJob*
-DecryptTask::CreateJob(int32 id)
-{
-	return DecryptJobs(id);
-}
-
-
-//	#pragma mark - EncryptTask
-
-
-CryptJob*
-EncryptTask::CreateJob(int32 id)
-{
-	return EncryptJobs(id);
-}
-
-
 //	#pragma mark -
-
-
-void
-init_crypt()
-{
-	system_info info;
-	if (get_system_info(&info) == B_OK)
-		sThreadCount = min_c(32, info.cpu_count);
-	if (sThreadCount == 0)
-		sThreadCount = 1;
-}
-
-
-void
-uninit_crypt()
-{
-}
 
 
 void

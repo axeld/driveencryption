@@ -11,7 +11,8 @@
 #include "encrypted_drive.h"
 
 #include "encrypted_drive_icon.h"
-#include "crypt.h"
+#include "CryptTasks.h"
+#include "Volume.h"
 
 #include <util/AutoLock.h>
 
@@ -55,7 +56,10 @@ extern device_hooks sDeviceHooks;
 typedef struct device_info {
 	int32				open_count;
 	int					fd;
-	VolumeCryptContext	context;
+	off_t				offset;
+	off_t				size;
+	TaskCryptContext	context;
+	bool				hidden;
 	bool				unused;
 	bool				registered;
 	char				file[B_PATH_NAME_LENGTH];
@@ -150,23 +154,26 @@ init_device_info(int32 index, encrypted_drive_info *initInfo, bool initialize)
 	if (fd < 0)
 		return errno;
 
+	Volume volume(info.context);
 	status_t error;
 	if (initialize) {
-		error = info.context.Setup(fd, initInfo->key,
-			initInfo->key_length, initInfo->random_data,
+		error = volume.Setup(fd, initInfo->key, initInfo->key_length, initInfo->random_data,
 			initInfo->random_length);
 	} else {
-		error = info.context.Detect(fd, initInfo->key,
-			initInfo->key_length);
+		error = volume.Detect(fd, initInfo->key, initInfo->key_length);
 	}
 
 	if (error == B_OK) {
 		// fill in the geometry
 
+		info.offset = volume.Offset();
+		info.size = volume.Size();
+		info.hidden = volume.IsHidden();
+
 		// default to 512 bytes block size
 		uint32 blockSize = 512;
 
-		off_t blocks = info.context.Size() / blockSize;
+		off_t blocks = volume.Size() / blockSize;
 		uint32 heads = 1;
 		while (blocks > UINT32_MAX) {
 			heads <<= 1;
@@ -247,8 +254,7 @@ encrypt_buffer(encrypted_drive_info& info)
 		diskKey, sizeof(diskKey));
 
 	CryptContext context;
-	status_t status = context.Init(ALGORITHM_AES, MODE_XTS,
-		diskKey, sizeof(diskKey));
+	status_t status = context.Init(ALGORITHM_AES, MODE_XTS, diskKey, sizeof(diskKey));
 	if (status != B_OK)
 		return status;
 
@@ -300,11 +306,11 @@ init_driver(void)
 
 	new(&sWorker) Worker();
 	sWorker.Init();
-	init_crypt();
+	init_crypt_tasks();
 
 	// init the device infos
 	for (int32 i = 0; i < kDeviceCount; i++) {
-		new(&gDeviceInfos[i].context) VolumeCryptContext();
+		new(&gDeviceInfos[i].context) TaskCryptContext();
 		clear_device_info(i);
 	}
 
@@ -319,10 +325,10 @@ uninit_driver(void)
 
 	// uninit the device infos
 	for (int32 i = 0; i < kDeviceCount; i++) {
-		gDeviceInfos[i].context.~VolumeCryptContext();
+		gDeviceInfos[i].context.~TaskCryptContext();
 	}
 
-	uninit_crypt();
+	uninit_crypt_tasks();
 	sWorker.~Worker();
 
 	recursive_lock_destroy(&sLock);
@@ -443,10 +449,10 @@ encrypted_drive_read(void* _cookie, off_t position, void* buffer,
 	MutexLocker locker(info.lock);
 
 	// adjust position and numBytes according to the file size
-	if (position > info.context.Size())
-		position = info.context.Size();
-	if (position + *numBytes > info.context.Size())
-		*numBytes = info.context.Size() - position;
+	if (position > info.size)
+		position = info.size;
+	if (position + *numBytes > info.size)
+		*numBytes = info.size - position;
 
 	if (position % info.geometry.bytes_per_sector != 0) {
 		// We use the block number as part of the decryption mechanism,
@@ -455,7 +461,7 @@ encrypted_drive_read(void* _cookie, off_t position, void* buffer,
 		return B_NOT_SUPPORTED;
 	}
 
-	position += info.context.Offset();
+	position += info.offset;
 
 	status_t error = B_OK;
 	size_t bytesLeft = *numBytes;
@@ -524,12 +530,12 @@ encrypted_drive_write(void* _cookie, off_t position, const void* buffer,
 	}
 
 	// adjust position and numBytes according to the file size
-	if (position > info.context.Size())
-		position = info.context.Size();
-	if (position + *numBytes > info.context.Size())
-		*numBytes = info.context.Size() - position;
+	if (position > info.size)
+		position = info.size;
+	if (position + *numBytes > info.size)
+		*numBytes = info.size - position;
 
-	position += info.context.Offset();
+	position += info.offset;
 
 	size_t bytesLeft = *numBytes;
 	status_t error = B_OK;
@@ -707,7 +713,7 @@ encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 		switch (op) {
 			case B_GET_DEVICE_SIZE:
 				TRACE(("encrypted_drive: B_GET_DEVICE_SIZE\n"));
-				*(size_t*)arg = info.context.Size();
+				*(size_t*)arg = info.size;
 				return B_OK;
 
 			case B_SET_NONBLOCKING_IO:
@@ -815,7 +821,7 @@ encrypted_drive_control(void* _cookie, uint32 op, void* arg, size_t length)
 				strcpy(driveInfo->device_name, "/dev/");
 				strcat(driveInfo->device_name, info.device_path);
 				driveInfo->read_only = info.geometry.read_only;
-				driveInfo->hidden = info.context.IsHidden();
+				driveInfo->hidden = info.hidden;
 				return B_OK;
 			}
 

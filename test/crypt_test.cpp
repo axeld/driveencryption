@@ -1,12 +1,12 @@
 /*
- * Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2009-2025, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
 
 #include "crypt.h"
-
 #include "random.h"
+#include "Volume.h"
 
 #include <fcntl.h>
 #include <stdlib.h>
@@ -19,19 +19,6 @@ const size_t kBufferSize = 65536;
 
 
 extern "C" void
-dprintf(const char *format,...)
-{
-	va_list args;
-	va_start(args, format);
-	printf("\33[34m");
-	vprintf(format, args);
-	printf("\33[0m");
-	fflush(stdout);
-	va_end(args);
-}
-
-
-extern "C" void
 dump_block(const char *buffer, int size, const char *prefix)
 {
 	const int DUMPED_BLOCK_SIZE = 16;
@@ -40,30 +27,30 @@ dump_block(const char *buffer, int size, const char *prefix)
 	for (i = 0; i < size;) {
 		int start = i;
 
-		dprintf(prefix);
+		printf(prefix);
 		for (; i < start + DUMPED_BLOCK_SIZE; i++) {
 			if (!(i % 4))
-				dprintf(" ");
+				printf(" ");
 
 			if (i >= size)
-				dprintf("  ");
+				printf("  ");
 			else
-				dprintf("%02x", *(unsigned char *)(buffer + i));
+				printf("%02x", *(unsigned char *)(buffer + i));
 		}
-		dprintf("  ");
+		printf("  ");
 
 		for (i = start; i < start + DUMPED_BLOCK_SIZE; i++) {
 			if (i < size) {
 				char c = buffer[i];
 
 				if (c < 30)
-					dprintf(".");
+					printf(".");
 				else
-					dprintf("%c", c);
+					printf("%c", c);
 			} else
 				break;
 		}
-		dprintf("\n");
+		printf("\n");
 	}
 }
 
@@ -75,21 +62,18 @@ main(int argc, char** argv)
 		return 1;
 
 	bool initialize = argc > 3 && !strcmp(argv[3], "init");
-	bool change = argc > 4 && !strcmp(argv[3], "change");
+	bool changePassword = argc > 4 && !strcmp(argv[3], "change");
+	bool resize = argc > 4 && !strcmp(argv[3], "resize");
 
-	int fd = open(argv[1], initialize || change ? O_RDWR : O_RDONLY);
+	int fd = open(argv[1], initialize || changePassword || resize ? O_RDWR : O_RDONLY);
 	if (fd < 0)
 		return 1;
 
 	uint8* key = (uint8*)argv[2];
 	size_t keyLength = strlen(argv[2]);
 
-	init_crypt();
-
-	Worker worker;
-	worker.Init();
-
-	VolumeCryptContext context;
+	CryptContext context;
+	Volume volume(context);
 	status_t status;
 
 	uint8* block = (uint8*)malloc(kBufferSize);
@@ -101,7 +85,7 @@ main(int argc, char** argv)
 		uint8 random[2048];
 		fill_random_buffer(random, sizeof(random));
 
-		status = context.Setup(fd, key, keyLength, random, sizeof(random));
+		status = volume.Setup(fd, key, keyLength, random, sizeof(random));
 		printf("setup: %s\n", strerror(status));
 
 		if (status == B_OK) {
@@ -109,25 +93,22 @@ main(int argc, char** argv)
 			for (int i = 0; i < kBufferSize; i++)
 				block[i] = i % 256;
 
-			off_t offset = context.Offset();
+			off_t offset = volume.Offset();
 			size_t written = 0;
 			while (written < kTestSize) {
 				size_t toWrite = min_c(kBufferSize, kTestSize - written);
 
-//				context.EncryptBlock(block, toWrite, offset / BLOCK_SIZE);
-				EncryptTask task(context, block, toWrite, offset / BLOCK_SIZE);
-				worker.AddTask(task);
-				worker.WaitFor(task);
+				context.EncryptBlock(block, toWrite, offset / BLOCK_SIZE);
 				write_pos(fd, offset, block, toWrite);
 
 				written += toWrite;
 				offset += toWrite;
 			}
 		}
-	} else if (change) {
+	} else if (changePassword) {
 		uint8* newKey = (uint8*)argv[4];
 		size_t newKeyLength = strlen(argv[4]);
-		status = context.SetPassword(fd, key, keyLength, newKey, newKeyLength);
+		status = volume.SetPassword(fd, key, keyLength, newKey, newKeyLength);
 		if (status != B_OK) {
 			fprintf(stderr, "Could not set password: %s\n",
 				strerror(status));
@@ -135,23 +116,25 @@ main(int argc, char** argv)
 		}
 
 //		status = context.Detect(fd, newKey, newKeyLength);
-		printf("-> %s, offset %lld\n", strerror(status), context.Offset());
+		printf("-> %s, offset %lld\n", strerror(status), volume.Offset());
+	} else if (resize) {
+		off_t newSize = atoll(argv[4]);
+		status = volume.Resize(fd, key, keyLength, newSize);
+		printf("resize: %s, offset %lld, size %lld\n", strerror(status), volume.Offset(), volume.Size());
 	} else {
-		status = context.Detect(fd, key, keyLength);
-		printf("detect: %s, offset %lld\n", strerror(status), context.Offset());
+		status = volume.Detect(fd, key, keyLength);
+		printf("detect: %s, offset %lld, size %lld\n", strerror(status), volume.Offset(), volume.Size());
 	}
 
+#if 0
 	if (status == B_OK) {
-		off_t offset = context.Offset();
+		off_t offset = volume.Offset();
 		size_t totalBytesRead = 0;
 		while (totalBytesRead < kTestSize) {
 			size_t toRead = min_c(kBufferSize, kTestSize - totalBytesRead);
 			ssize_t bytesRead = read_pos(fd, offset, block, toRead);
 			if (bytesRead == toRead) {
-//				context.DecryptBlock(block, toRead, offset / BLOCK_SIZE);
-				DecryptTask task(context, block, toRead, offset / BLOCK_SIZE);
-				worker.AddTask(task);
-				worker.WaitFor(task);
+				context.DecryptBlock(block, toRead, offset / BLOCK_SIZE);
 
 				dump_block((char*)block, toRead, "READ");
 
@@ -173,6 +156,7 @@ main(int argc, char** argv)
 			offset += toRead;
 		}
 	}
+#endif
 	free(block);
 
 	close(fd);
