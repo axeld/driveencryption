@@ -1,5 +1,5 @@
 /*
- * Copyright 2009-2025, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2009-2026, Axel Dörfler, axeld@pinc-software.de.
  * Distributed under the terms of the MIT License.
  */
 
@@ -58,8 +58,10 @@ dump_block(const char *buffer, int size, const char *prefix)
 int
 main(int argc, char** argv)
 {
-	if (argc < 3)
+	if (argc < 3) {
+		fprintf(stderr, "%s <device/image> <key> {init|change|resize} [newPassword|newSize]\n", argv[0]);
 		return 1;
+	}
 
 	bool initialize = argc > 3 && !strcmp(argv[3], "init");
 	bool changePassword = argc > 4 && !strcmp(argv[3], "change");
